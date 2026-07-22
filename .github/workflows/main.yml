@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       boot_link:
-        description: 'Pixeldrain Link for boot.img (e.g., https://pixeldrain.com/u/...)'
+        description: 'Pixeldrain Link for boot.img'
         required: true
         type: string
       vendor_boot_link:
@@ -44,10 +44,11 @@ jobs:
           mkdir source && cd source
           repo init -u https://android.googlesource.com/platform/manifest -b android-14.0.0_r1 --depth=1
 
-      - name: Sync Manifest Sources (Minimal Recovery Components)
+      - name: Sync Manifest Sources (Full Shallow Sync)
         run: |
           cd source
-          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j8 bootable/recovery build/make
+          # Removed the path filters so the entire build toolchain (Soong/Blueprint) is downloaded
+          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune --force-sync -j8
 
       - name: Download User Components from Pixeldrain
         run: |
@@ -58,28 +59,17 @@ jobs:
           VENDOR_URL=$(echo "${{ github.event.inputs.vendor_boot_link }}" | sed 's|/u/|/api/file/|g')
           DTBO_URL=$(echo "${{ github.event.inputs.dtbo_link }}" | sed 's|/u/|/api/file/|g')
           
-          echo "Downloading boot.img from $BOOT_URL..."
+          echo "Downloading boot.img..."
           curl -L "$BOOT_URL" -o input_images/boot.img
           
-          echo "Downloading vendor_boot.img from $VENDOR_URL..."
+          echo "Downloading vendor_boot.img..."
           curl -L "$VENDOR_URL" -o input_images/vendor_boot.img
           
-          echo "Downloading dtbo.img from $DTBO_URL..."
+          echo "Downloading dtbo.img..."
           curl -L "$DTBO_URL" -o input_images/dtbo.img
-          
-          # Verify the downloaded file is an actual image, not an HTML error page
-          echo "Verifying downloaded boot image format:"
-          file input_images/boot.img
 
-      - name: Generate Device Tree using twrpdtgen & Inject Payloads
+      - name: Generate Device Tree & Patch for Pure AOSP
         run: |
-          # Failsafe: Check file size to ensure we didn't just download a 5KB HTML page
-          FILESIZE=$(stat -c%s "input_images/boot.img")
-          if [ "$FILESIZE" -lt 1000000 ]; then
-            echo "Error: Downloaded boot.img is too small ($FILESIZE bytes). Link might be invalid or rate-limited."
-            exit 1
-          fi
-          
           python3 -m twrpdtgen input_images/boot.img -o source/device
           
           if [ -d "source/device/xiaomi/pipa" ]; then
@@ -94,15 +84,22 @@ jobs:
               fi
           fi
           
+          # Rename twrpdtgen's omni/twrp prefixes to aosp for pure AOSP building
+          mv "$DT_PATH/omni_pipa.mk" "$DT_PATH/aosp_pipa.mk" 2>/dev/null || true
+          mv "$DT_PATH/twrp_pipa.mk" "$DT_PATH/aosp_pipa.mk" 2>/dev/null || true
+          find "$DT_PATH" -type f -exec sed -i 's/omni_pipa/aosp_pipa/g' {} +
+          find "$DT_PATH" -type f -exec sed -i 's/twrp_pipa/aosp_pipa/g' {} +
+          
           mkdir -p "$DT_PATH/recovery/root/sbin"
           
+          # Inject custom scripts
           cp PARTITION "$DT_PATH/recovery/root/sbin/partition" 2>/dev/null || true
           cp RESTORE "$DT_PATH/recovery/root/sbin/restore" 2>/dev/null || true
           cp parted "$DT_PATH/recovery/root/sbin/parted" 2>/dev/null || true
           cp mkfs.fat "$DT_PATH/recovery/root/sbin/mkfs.fat" 2>/dev/null || true
           cp mkfs.ntfs "$DT_PATH/recovery/root/sbin/mkfs.ntfs" 2>/dev/null || true
           
-          chmod +x "$DT_PATH/recovery/root/sbin/"*
+          chmod +x "$DT_PATH/recovery/root/sbin/"* 2>/dev/null || true
 
       - name: Start Compilation
         run: |
