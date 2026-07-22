@@ -77,6 +77,9 @@ jobs:
         run: |
           ROM_LINK="${{ github.event.inputs.stock_rom_link }}"
           
+          # Strip accidental leading/trailing spaces from manual input
+          ROM_LINK=$(echo "$ROM_LINK" | tr -d '[:space:]')
+          
           # Auto-fetch if input box was left empty
           if [ -z "$ROM_LINK" ]; then
             echo "No manual link provided. Auto-fetching the latest Recovery ROM for pipa..."
@@ -89,13 +92,13 @@ jobs:
               # First try India Recovery ROM
               for rom in data:
                   if 'pipa' in rom['device'] and 'India' in rom['device'] and rom['link'].endswith('.zip'):
-                      print(rom['link'])
+                      print(rom['link'].strip())
                       exit(0)
                       
               # Fallback to Global Recovery ROM
               for rom in data:
                   if 'pipa' in rom['device'] and 'Global' in rom['device'] and rom['link'].endswith('.zip'):
-                      print(rom['link'])
+                      print(rom['link'].strip())
                       exit(0)
           except Exception as e:
               pass
@@ -258,4 +261,3 @@ jobs:
           name: ${{ github.event.inputs.device_codename }}-device-tree
           path: twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}
           retention-days: 14
-          
