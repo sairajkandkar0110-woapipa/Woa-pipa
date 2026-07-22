@@ -1,0 +1,80 @@
+#!/sbin/sh
+# Restoration / Revert Script for Windows on ARM (Xiaomi Pad 6 / pipa)
+
+clear
+echo "=================================================="
+echo "    Xiaomi Pad 6 Dual-Boot Restoration Utility    "
+echo "=================================================="
+
+# Ensure parted and sgdisk exist
+for tool in parted sgdisk; do
+    if ! command -v "$tool" >/dev/null 2>&1 && [ ! -f "/sbin/$tool" ]; then
+        echo "Error: Required tool '$tool' is missing from the environment!"
+        exit 1
+    fi
+done
+
+BLOCK_DEV="/dev/block/sda"
+
+# Step 1: Unmount /tmp/win if it's currently mounted
+if mountpoint -q /tmp/win; then
+    echo "[*] Unmounting Windows partition from /tmp/win..."
+    umount /tmp/win || umount -l /tmp/win
+fi
+
+# Step 2: Resize partition table entries
+echo "[*] Resizing GPT table entries..."
+sgdisk --resize-table 64 "$BLOCK_DEV"
+
+# Step 3: Automatically find partition indices for userdata, esp, and win
+USERDATA_LINE=$(parted -s "$BLOCK_DEV" print | grep userdata)
+if [ -z "$USERDATA_LINE" ]; then
+    echo "Error: Could not automatically detect 'userdata' partition!"
+    exit 1
+fi
+
+USERDATA_NUM=$(echo "$USERDATA_LINE" | awk '{print $1}')
+USER_START=$(echo "$USERDATA_LINE" | awk '{print $2}')
+ESP_NUM=$(parted -s "$BLOCK_DEV" print | grep esp | awk '{print $1}')
+WIN_NUM=$(parted -s "$BLOCK_DEV" print | grep win | awk '{print $1}')
+
+echo "[+] Detected userdata at index $USERDATA_NUM (Starts at: $USER_START)"
+if [ -n "$ESP_NUM" ]; then echo "[+] Detected ESP partition at index $ESP_NUM"; fi
+if [ -n "$WIN_NUM" ]; then echo "[+] Detected Windows partition at index $WIN_NUM"; fi
+
+echo ""
+echo "[*] WARNING: This will delete the ESP and Windows partitions"
+echo "    and expand userdata to consume all remaining disk space!"
+read -p "Are you sure you want to restore the layout? (y/N): " CONFIRM
+if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+    echo "Aborted by user."
+    exit 0
+fi
+
+# Step 4: Remove Windows and ESP partitions if they exist
+if [ -n "$WIN_NUM" ]; then
+    echo "[*] Removing Windows partition (Index: $WIN_NUM)..."
+    parted -s "$BLOCK_DEV" rm "$WIN_NUM"
+fi
+
+if [ -n "$ESP_NUM" ]; then
+    echo "[*] Removing ESP partition (Index: $ESP_NUM)..."
+    parted -s "$BLOCK_DEV" rm "$ESP_NUM"
+fi
+
+# Step 5: Remove current resized userdata partition to expand it back
+echo "[*] Removing current userdata partition (Index: $USERDATA_NUM)..."
+parted -s "$BLOCK_DEV" rm "$USERDATA_NUM"
+
+# Step 6: Recreate userdata utilizing the original start boundary up to all remaining space (-0MB)
+echo "[*] Recreating userdata to consume all remaining free space..."
+parted -s "$BLOCK_DEV" mkpart userdata ext4 "$USER_START" -0MB
+
+# Step 7: Finalize and display final layout
+echo "[*] Finalizing partition table changes..."
+parted -s "$BLOCK_DEV" print
+partprobe "$BLOCK_DEV" 2>/dev/null || sleep 2
+
+echo "=================================================="
+echo "    Restoration Complete! Layout Reverted.        "
+echo "=================================================="
