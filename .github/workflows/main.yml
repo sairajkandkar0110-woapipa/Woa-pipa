@@ -42,7 +42,7 @@ jobs:
       - name: Initialize TWRP Source Manifest
         run: |
           mkdir twrp && cd twrp
-          repo init -u https://github.com/TeamWin/android_manifest.git -b twrp-14.0 --depth=1
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b twrp-12.1 --depth=1
 
       - name: Sync Manifest Sources
         run: |
@@ -61,15 +61,11 @@ jobs:
 
       - name: Generate Device Tree using twrpdtgen & Inject Payloads
         run: |
-          # Automatically generate the device tree from the downloaded boot/recovery image
           python3 -m twrpdtgen input_images/boot.img -o twrp/device
           
-          # twrpdtgen outputs to twrp/device/manufacturer/codename (for Xiaomi Pad 6 'pipa', let's safely locate or map it)
-          # Moving/Ensuring target device tree resides correctly at twrp/device/xiaomi/pipa
           if [ -d "twrp/device/xiaomi/pipa" ]; then
               DT_PATH="twrp/device/xiaomi/pipa"
           else
-              # Fallback find if codename matches pipa
               FOUND_PATH=$(find twrp/device -maxdepth 3 -type d -name "*pipa*")
               if [ -n "$FOUND_PATH" ]; then
                   DT_PATH="$FOUND_PATH"
@@ -81,7 +77,6 @@ jobs:
           
           mkdir -p "$DT_PATH/recovery/root/sbin"
           
-          # Inject scripts and binaries into the recovery root sbin directory
           cp PARTITION "$DT_PATH/recovery/root/sbin/partition" 2>/dev/null || true
           cp RESTORE "$DT_PATH/recovery/root/sbin/restore" 2>/dev/null || true
           cp parted "$DT_PATH/recovery/root/sbin/parted" 2>/dev/null || true
@@ -95,7 +90,7 @@ jobs:
           cd twrp
           export ALLOW_MISSING_DEPENDENCIES=true
           source build/envsetup.sh
-          lunch twrp_pipa-userdebug
+          lunch omni_pipa-userdebug
           mka recoveryimage
 
       - name: Upload Recovery Artifact
