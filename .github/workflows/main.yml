@@ -27,21 +27,22 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y \
             git python3 gperf build-essential zip curl zlib1g-dev libx11-dev \
-            libgl1-mesa-dev fontconfig libxml2-utils xsltproc rsync bc
+            libgl1-mesa-dev fontconfig libxml2-utils xsltproc rsync bc cpio
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
-      - name: Install Repo Tool
+      - name: Install Repo Tool & twrpdtgen
         run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
+          pip3 install twrpdtgen
 
       - name: Initialize TWRP Source Manifest
         run: |
           mkdir twrp && cd twrp
-          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git -b twrp-12.1 --depth=1
+          repo init -u https://github.com/TeamWin/android_manifest.git -b twrp-14.0 --depth=1
 
       - name: Sync Manifest Sources
         run: |
@@ -58,27 +59,43 @@ jobs:
           echo "Downloading dtbo.img..."
           curl -L "${{ github.event.inputs.dtbo_link }}" -o input_images/dtbo.img
 
-      - name: Clone Device Tree and Inject Custom Payloads
+      - name: Generate Device Tree using twrpdtgen & Inject Payloads
         run: |
-          mkdir -p twrp/device/xiaomi
-          git clone https://github.com/nino088/device_xiaomi_pipa-TWRP twrp/device/xiaomi/pipa
+          # Automatically generate the device tree from the downloaded boot/recovery image
+          python3 -m twrpdtgen input_images/boot.img -o twrp/device
           
-          mkdir -p twrp/device/xiaomi/pipa/recovery/root/sbin
+          # twrpdtgen outputs to twrp/device/manufacturer/codename (for Xiaomi Pad 6 'pipa', let's safely locate or map it)
+          # Moving/Ensuring target device tree resides correctly at twrp/device/xiaomi/pipa
+          if [ -d "twrp/device/xiaomi/pipa" ]; then
+              DT_PATH="twrp/device/xiaomi/pipa"
+          else
+              # Fallback find if codename matches pipa
+              FOUND_PATH=$(find twrp/device -maxdepth 3 -type d -name "*pipa*")
+              if [ -n "$FOUND_PATH" ]; then
+                  DT_PATH="$FOUND_PATH"
+              else
+                  DT_PATH="twrp/device/xiaomi/pipa"
+                  mkdir -p "$DT_PATH"
+              fi
+          fi
           
-          cp PARTITION twrp/device/xiaomi/pipa/recovery/root/sbin/partition 2>/dev/null || true
-          cp RESTORE twrp/device/xiaomi/pipa/recovery/root/sbin/restore 2>/dev/null || true
-          cp parted twrp/device/xiaomi/pipa/recovery/root/sbin/parted 2>/dev/null || true
-          cp mkfs.fat twrp/device/xiaomi/pipa/recovery/root/sbin/mkfs.fat 2>/dev/null || true
-          cp mkfs.ntfs twrp/device/xiaomi/pipa/recovery/root/sbin/mkfs.ntfs 2>/dev/null || true
+          mkdir -p "$DT_PATH/recovery/root/sbin"
           
-          chmod +x twrp/device/xiaomi/pipa/recovery/root/sbin/*
+          # Inject scripts and binaries into the recovery root sbin directory
+          cp PARTITION "$DT_PATH/recovery/root/sbin/partition" 2>/dev/null || true
+          cp RESTORE "$DT_PATH/recovery/root/sbin/restore" 2>/dev/null || true
+          cp parted "$DT_PATH/recovery/root/sbin/parted" 2>/dev/null || true
+          cp mkfs.fat "$DT_PATH/recovery/root/sbin/mkfs.fat" 2>/dev/null || true
+          cp mkfs.ntfs "$DT_PATH/recovery/root/sbin/mkfs.ntfs" 2>/dev/null || true
+          
+          chmod +x "$DT_PATH/recovery/root/sbin/"*
 
       - name: Start Compilation
         run: |
           cd twrp
           export ALLOW_MISSING_DEPENDENCIES=true
           source build/envsetup.sh
-          lunch omni_pipa-userdebug
+          lunch twrp_pipa-userdebug
           mka recoveryimage
 
       - name: Upload Recovery Artifact
@@ -86,3 +103,4 @@ jobs:
         with:
           name: Xiaomi-Pad-6-Custom-Recovery
           path: twrp/out/target/product/pipa/recovery.img
+          
