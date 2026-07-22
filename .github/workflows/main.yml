@@ -22,7 +22,7 @@ on:
 
 jobs:
   build-twrp:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - name: Checkout this repo (WOA tools + scripts)
         uses: actions/checkout@v4
@@ -82,3 +82,91 @@ jobs:
             LINK="https://pixeldrain.com/api/file/${FILE_ID}"
           fi
           wget -O boot.img "$LINK"
+          file boot.img
+
+      - name: Generate device tree with twrpdtgen
+        run: |
+          python3 -m twrpdtgen boot.img -o device_tree_output
+          find device_tree_output -maxdepth 4 -type f
+
+      - name: Init TWRP minimal manifest
+        run: |
+          mkdir -p twrp_build
+          cd twrp_build
+          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ github.event.inputs.twrp_branch }}
+          repo sync -j$(nproc --all) --force-sync --no-tags --no-clone-bundle
+
+      - name: Clean up repo sync leftovers
+        run: |
+          df -h
+          find twrp_build -name "*.git" -type d -prune -exec du -sh {} \; 2>/dev/null | sort -rh | head -20 || true
+
+      - name: Place generated device tree
+        run: |
+          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          mkdir -p "$DT_PATH"
+          cp -r device_tree_output/*/. "$DT_PATH"/ 2>/dev/null || cp -r device_tree_output/. "$DT_PATH"/
+          ls -la "$DT_PATH"
+
+      - name: Inject WOA binaries and trigger scripts into recovery root
+        run: |
+          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          SBIN_PATH="$DT_PATH/recovery/root/sbin"
+          mkdir -p "$SBIN_PATH"
+
+          cp woa-tools/parted "$SBIN_PATH/parted"
+          cp woa-tools/mkfs.fat "$SBIN_PATH/mkfs.fat"
+          cp woa-tools/mkfs.ntfs "$SBIN_PATH/mkfs.ntfs"
+
+          cp woa-tools/PARTITION "$SBIN_PATH/partition"
+          cp woa-tools/RESTORE "$SBIN_PATH/restore"
+
+          chmod 755 "$SBIN_PATH/parted" "$SBIN_PATH/mkfs.fat" "$SBIN_PATH/mkfs.ntfs" \
+                    "$SBIN_PATH/partition" "$SBIN_PATH/restore"
+
+          ls -la "$SBIN_PATH"
+
+      - name: Verify BoardConfig references recovery root
+        run: |
+          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          BOARDCONFIG="$DT_PATH/BoardConfig.mk"
+          grep -n "RECOVERY_ROOT\|TARGET_COPY_OUT" "$BOARDCONFIG" || true
+
+      - name: Build TWRP recovery image
+        run: |
+          cd twrp_build
+          source build/envsetup.sh
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          export CCACHE_EXEC=$(which ccache)
+          ccache -M 5G
+          lunch twrp_${{ github.event.inputs.device_codename }}-eng
+          mka recoveryimage -j$(nproc --all)
+
+      - name: Free space after build (pre-upload)
+        if: always()
+        run: df -h
+
+      - name: Locate build output
+        id: find_output
+        run: |
+          OUT=$(find twrp_build/out/target/product/${{ github.event.inputs.device_codename }} -maxdepth 1 -iname "*recovery*.img" | head -n1)
+          echo "recovery_path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "Found: $OUT"
+
+      - name: Upload recovery image
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-${{ github.event.inputs.device_codename }}-modded-WOA
+          path: ${{ steps.find_output.outputs.recovery_path }}
+          retention-days: 14
+
+      - name: Upload generated device tree too
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.device_codename }}-device-tree
+          path: twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}
+          retention-days: 14
+          
