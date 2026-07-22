@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       boot_link:
-        description: 'Pixeldrain Direct Link for boot.img'
+        description: 'Pixeldrain Link for boot.img (e.g., https://pixeldrain.com/u/...)'
         required: true
         type: string
       vendor_boot_link:
-        description: 'Pixeldrain Direct Link for vendor_boot.img'
+        description: 'Pixeldrain Link for vendor_boot.img'
         required: true
         type: string
       dtbo_link:
-        description: 'Pixeldrain Direct Link for dtbo.img'
+        description: 'Pixeldrain Link for dtbo.img'
         required: true
         type: string
 
@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y \
             git python3 gperf build-essential zip curl zlib1g-dev libx11-dev \
-            libgl1-mesa-dev fontconfig libxml2-utils xsltproc rsync bc cpio
+            libgl1-mesa-dev fontconfig libxml2-utils xsltproc rsync bc cpio file
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
@@ -52,15 +52,34 @@ jobs:
       - name: Download User Components from Pixeldrain
         run: |
           mkdir -p input_images
-          echo "Downloading boot.img..."
-          curl -L "${{ github.event.inputs.boot_link }}" -o input_images/boot.img
-          echo "Downloading vendor_boot.img..."
-          curl -L "${{ github.event.inputs.vendor_boot_link }}" -o input_images/vendor_boot.img
-          echo "Downloading dtbo.img..."
-          curl -L "${{ github.event.inputs.dtbo_link }}" -o input_images/dtbo.img
+          
+          # Automatically convert Pixeldrain web UI links to raw file API links
+          BOOT_URL=$(echo "${{ github.event.inputs.boot_link }}" | sed 's|/u/|/api/file/|g')
+          VENDOR_URL=$(echo "${{ github.event.inputs.vendor_boot_link }}" | sed 's|/u/|/api/file/|g')
+          DTBO_URL=$(echo "${{ github.event.inputs.dtbo_link }}" | sed 's|/u/|/api/file/|g')
+          
+          echo "Downloading boot.img from $BOOT_URL..."
+          curl -L "$BOOT_URL" -o input_images/boot.img
+          
+          echo "Downloading vendor_boot.img from $VENDOR_URL..."
+          curl -L "$VENDOR_URL" -o input_images/vendor_boot.img
+          
+          echo "Downloading dtbo.img from $DTBO_URL..."
+          curl -L "$DTBO_URL" -o input_images/dtbo.img
+          
+          # Verify the downloaded file is an actual image, not an HTML error page
+          echo "Verifying downloaded boot image format:"
+          file input_images/boot.img
 
       - name: Generate Device Tree using twrpdtgen & Inject Payloads
         run: |
+          # Failsafe: Check file size to ensure we didn't just download a 5KB HTML page
+          FILESIZE=$(stat -c%s "input_images/boot.img")
+          if [ "$FILESIZE" -lt 1000000 ]; then
+            echo "Error: Downloaded boot.img is too small ($FILESIZE bytes). Link might be invalid or rate-limited."
+            exit 1
+          fi
+          
           python3 -m twrpdtgen input_images/boot.img -o source/device
           
           if [ -d "source/device/xiaomi/pipa" ]; then
