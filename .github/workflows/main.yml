@@ -39,15 +39,15 @@ jobs:
           echo "$HOME/bin" >> $GITHUB_PATH
           pip3 install twrpdtgen
 
-      - name: Initialize TWRP Source Manifest
+      - name: Initialize Android Open Source Manifest
         run: |
-          mkdir twrp && cd twrp
-          repo init -u https://github.com/minimal-openrecovery/android_manifest_omni -b twrp-12.1 --depth=1
+          mkdir source && cd source
+          repo init -u https://android.googlesource.com/platform/manifest -b android-14.0.0_r1 --depth=1
 
-      - name: Sync Manifest Sources
+      - name: Sync Manifest Sources (Minimal Recovery Components)
         run: |
-          cd twrp
-          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j8
+          cd source
+          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j8 bootable/recovery build/make
 
       - name: Download User Components from Pixeldrain
         run: |
@@ -61,16 +61,16 @@ jobs:
 
       - name: Generate Device Tree using twrpdtgen & Inject Payloads
         run: |
-          python3 -m twrpdtgen input_images/boot.img -o twrp/device
+          python3 -m twrpdtgen input_images/boot.img -o source/device
           
-          if [ -d "twrp/device/xiaomi/pipa" ]; then
-              DT_PATH="twrp/device/xiaomi/pipa"
+          if [ -d "source/device/xiaomi/pipa" ]; then
+              DT_PATH="source/device/xiaomi/pipa"
           else
-              FOUND_PATH=$(find twrp/device -maxdepth 3 -type d -name "*pipa*")
+              FOUND_PATH=$(find source/device -maxdepth 3 -type d -name "*pipa*")
               if [ -n "$FOUND_PATH" ]; then
                   DT_PATH="$FOUND_PATH"
               else
-                  DT_PATH="twrp/device/xiaomi/pipa"
+                  DT_PATH="source/device/xiaomi/pipa"
                   mkdir -p "$DT_PATH"
               fi
           fi
@@ -87,15 +87,15 @@ jobs:
 
       - name: Start Compilation
         run: |
-          cd twrp
+          cd source
           export ALLOW_MISSING_DEPENDENCIES=true
           source build/envsetup.sh
-          lunch omni_pipa-userdebug
+          lunch aosp_pipa-userdebug
           mka recoveryimage
 
       - name: Upload Recovery Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Xiaomi-Pad-6-Custom-Recovery
-          path: twrp/out/target/product/pipa/recovery.img
+          name: Xiaomi-Pad-6-AOSP-Recovery
+          path: source/out/target/product/pipa/recovery.img
           
