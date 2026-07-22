@@ -1,12 +1,12 @@
-name: Build Modded TWRP (pipa) with WOA tools
+name: Build Modded TWRP (pipa) with WOA tools & Decryption
 
 on:
   workflow_dispatch:
     inputs:
-      boot_img_link:
-        description: 'Direct/Pixeldrain link to boot.img'
-        required: true
-        default: 'https://pixeldrain.com/u/CHANGE_ME'
+      stock_rom_link:
+        description: 'Direct link to Stock ROM ZIP (Leave blank to auto-fetch latest)'
+        required: false
+        default: ''
       device_codename:
         description: 'Device codename'
         required: true
@@ -62,7 +62,7 @@ jobs:
             g++-multilib gcc-multilib git gnupg gperf imagemagick \
             lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev \
             libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush \
-            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+            rsync schedtool squashfs-tools xsltproc zip zlib1g-dev erofs-utils
           pip3 install twrpdtgen
           sudo apt-get clean
 
@@ -73,19 +73,59 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Download boot.img
+      - name: Download Stock ROM & Extract Partition Payloads
         run: |
-          LINK="${{ github.event.inputs.boot_img_link }}"
-          if [[ "$LINK" == *"pixeldrain.com/u/"* ]]; then
-            FILE_ID="${LINK##*/u/}"
-            LINK="https://pixeldrain.com/api/file/${FILE_ID}"
+          ROM_LINK="${{ github.event.inputs.stock_rom_link }}"
+          
+          # Auto-fetch if input box was left empty
+          if [ -z "$ROM_LINK" ]; then
+            echo "No manual link provided. Auto-fetching the latest HyperOS Recovery ROM for pipa..."
+            ROM_LINK=$(python3 -c "
+          import urllib.request, json
+          try:
+              req = urllib.request.Request('https://raw.githubusercontent.com/XiaomiFirmwareUpdater/hyperos-updates-tracker/master/data/latest.json')
+              data = json.loads(urllib.request.urlopen(req).read().decode())
+              for rom in data:
+                  if 'pipa' in rom['device'] and 'India' in rom['device'] and rom['link'].endswith('.zip'):
+                      print(rom['link'])
+                      exit(0)
+              for rom in data:
+                  if 'pipa' in rom['device'] and 'Global' in rom['device'] and rom['link'].endswith('.zip'):
+                      print(rom['link'])
+                      exit(0)
+          except Exception as e:
+              pass
+          ")
           fi
-          wget -O boot.img "$LINK"
-          file boot.img
+          
+          if [ -z "$ROM_LINK" ]; then
+            echo "Failed to auto-fetch ROM link. Please provide one manually in the workflow inputs."
+            exit 1
+          fi
+          
+          echo "Downloading Stock ROM from: $ROM_LINK"
+          wget -q -O stock_rom.zip "$ROM_LINK"
+          
+          echo "Extracting payload.bin from ROM zip..."
+          unzip -j stock_rom.zip payload.bin -d extraction/
+          
+          echo "Downloading payload-dumper-go..."
+          wget -q -O payload-dumper.tar.gz https://github.com/ssut/payload-dumper-go/releases/download/1.2.2/payload-dumper-go_1.2.2_linux_amd64.tar.gz
+          tar -xf payload-dumper.tar.gz
+          
+          echo "Dumping boot.img and vendor.img from payload.bin..."
+          ./payload-dumper-go -p boot,vendor extraction/payload.bin
+          
+          # Locate extracted boot image
+          BOOT_PATH=$(find extracted_* -name "boot.img" | head -n 1)
+          cp "$BOOT_PATH" ./extracted_boot.img
+          
+          echo "Verifying dumped boot image:"
+          file extracted_boot.img
 
-      - name: Generate device tree with twrpdtgen
+      - name: Generate device tree with twrpdtgen from Stock boot.img
         run: |
-          python3 -m twrpdtgen boot.img -o device_tree_output
+          python3 -m twrpdtgen extracted_boot.img -o device_tree_output
           find device_tree_output -maxdepth 4 -type f
 
       - name: Init TWRP minimal manifest
@@ -102,12 +142,36 @@ jobs:
           df -h
           find twrp_build -name "*.git" -type d -prune -exec du -sh {} \; 2>/dev/null | sort -rh | head -20 || true
 
-      - name: Place generated device tree
+      - name: Place generated device tree & Configure Installer
         run: |
           DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
           mkdir -p "$DT_PATH"
           cp -r device_tree_output/*/. "$DT_PATH"/ 2>/dev/null || cp -r device_tree_output/. "$DT_PATH"/
+          
+          echo "Configuring TWRP Flashable Installer..."
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          
           ls -la "$DT_PATH"
+
+      - name: Extract Decryption Blobs from Stock vendor.img
+        run: |
+          echo "Extracting EROFS vendor image..."
+          mkdir -p extracted_vendor
+          VENDOR_IMG=$(find extracted_* -name "vendor.img" | head -n 1)
+          fsck.erofs --extract=extracted_vendor "$VENDOR_IMG"
+          
+          echo "Copying keymaster and gatekeeper to device tree..."
+          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          mkdir -p "$DT_PATH/recovery/root/vendor/lib64/hw"
+          mkdir -p "$DT_PATH/recovery/root/vendor/bin/hw"
+          
+          cp -rf extracted_vendor/lib64/hw/android.hardware.gatekeeper* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
+          cp -rf extracted_vendor/lib64/hw/android.hardware.keymaster* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
+          
+          echo "Adding Crypto flags to BoardConfig.mk..."
+          echo "BOARD_USES_QCOM_FBE_DECRYPTION := true" >> "$DT_PATH/BoardConfig.mk"
+          echo "BOARD_USES_METADATA_PARTITION := true" >> "$DT_PATH/BoardConfig.mk"
 
       - name: Inject WOA binaries and trigger scripts into recovery root
         run: |
@@ -115,15 +179,15 @@ jobs:
           SBIN_PATH="$DT_PATH/recovery/root/sbin"
           mkdir -p "$SBIN_PATH"
 
-          cp woa-tools/parted "$SBIN_PATH/parted"
-          cp woa-tools/mkfs.fat "$SBIN_PATH/mkfs.fat"
-          cp woa-tools/mkfs.ntfs "$SBIN_PATH/mkfs.ntfs"
+          cp woa-tools/parted "$SBIN_PATH/parted" 2>/dev/null || true
+          cp woa-tools/mkfs.fat "$SBIN_PATH/mkfs.fat" 2>/dev/null || true
+          cp woa-tools/mkfs.ntfs "$SBIN_PATH/mkfs.ntfs" 2>/dev/null || true
 
-          cp woa-tools/PARTITION "$SBIN_PATH/partition"
-          cp woa-tools/RESTORE "$SBIN_PATH/restore"
+          cp woa-tools/PARTITION "$SBIN_PATH/partition" 2>/dev/null || true
+          cp woa-tools/RESTORE "$SBIN_PATH/restore" 2>/dev/null || true
 
           chmod 755 "$SBIN_PATH/parted" "$SBIN_PATH/mkfs.fat" "$SBIN_PATH/mkfs.ntfs" \
-                    "$SBIN_PATH/partition" "$SBIN_PATH/restore"
+                    "$SBIN_PATH/partition" "$SBIN_PATH/restore" 2>/dev/null || true
 
           ls -la "$SBIN_PATH"
 
@@ -133,7 +197,7 @@ jobs:
           BOARDCONFIG="$DT_PATH/BoardConfig.mk"
           grep -n "RECOVERY_ROOT\|TARGET_COPY_OUT" "$BOARDCONFIG" || true
 
-      - name: Build TWRP recovery image
+      - name: Build TWRP boot image & flashable installer
         run: |
           cd twrp_build
           source build/envsetup.sh
@@ -142,7 +206,10 @@ jobs:
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
           lunch twrp_${{ github.event.inputs.device_codename }}-eng
-          mka recoveryimage -j$(nproc --all)
+          mka bootimage -j$(nproc --all)
+          
+          echo "Building Flashable ZIP target explicitly..."
+          mka twrp_installer -j$(nproc --all) || true
 
       - name: Free space after build (pre-upload)
         if: always()
@@ -151,15 +218,27 @@ jobs:
       - name: Locate build output
         id: find_output
         run: |
-          OUT=$(find twrp_build/out/target/product/${{ github.event.inputs.device_codename }} -maxdepth 1 -iname "*recovery*.img" | head -n1)
-          echo "recovery_path=$OUT" >> "$GITHUB_OUTPUT"
-          echo "Found: $OUT"
+          OUT_IMG=$(find twrp_build/out/target/product/${{ github.event.inputs.device_codename }} -maxdepth 1 -iname "boot.img" | head -n1)
+          OUT_ZIP=$(find twrp_build/out/target/product/${{ github.event.inputs.device_codename }} -maxdepth 1 -iname "*twrp*.zip" | head -n1)
+          echo "img_path=$OUT_IMG" >> "$GITHUB_OUTPUT"
+          echo "zip_path=$OUT_ZIP" >> "$GITHUB_OUTPUT"
+          echo "Found IMG: $OUT_IMG"
+          echo "Found ZIP: $OUT_ZIP"
 
-      - name: Upload recovery image
+      - name: Upload Boot Image
         uses: actions/upload-artifact@v4
+        if: steps.find_output.outputs.img_path != ''
         with:
-          name: TWRP-${{ github.event.inputs.device_codename }}-modded-WOA
-          path: ${{ steps.find_output.outputs.recovery_path }}
+          name: TWRP-${{ github.event.inputs.device_codename }}-boot-modded-WOA
+          path: ${{ steps.find_output.outputs.img_path }}
+          retention-days: 14
+
+      - name: Upload Flashable ZIP Installer
+        uses: actions/upload-artifact@v4
+        if: steps.find_output.outputs.zip_path != ''
+        with:
+          name: TWRP-${{ github.event.inputs.device_codename }}-Flashable-Installer-WOA
+          path: ${{ steps.find_output.outputs.zip_path }}
           retention-days: 14
 
       - name: Upload generated device tree too
