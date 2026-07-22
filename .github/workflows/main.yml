@@ -79,16 +79,20 @@ jobs:
           
           # Auto-fetch if input box was left empty
           if [ -z "$ROM_LINK" ]; then
-            echo "No manual link provided. Auto-fetching the latest HyperOS Recovery ROM for pipa..."
+            echo "No manual link provided. Auto-fetching the latest Recovery ROM for pipa..."
             ROM_LINK=$(python3 -c "
           import urllib.request, json
           try:
-              req = urllib.request.Request('https://raw.githubusercontent.com/XiaomiFirmwareUpdater/hyperos-updates-tracker/master/data/latest.json')
+              req = urllib.request.Request('https://raw.githubusercontent.com/XiaomiFirmwareUpdater/miui-updates-tracker/master/data/latest.json')
               data = json.loads(urllib.request.urlopen(req).read().decode())
+              
+              # First try India Recovery ROM
               for rom in data:
                   if 'pipa' in rom['device'] and 'India' in rom['device'] and rom['link'].endswith('.zip'):
                       print(rom['link'])
                       exit(0)
+                      
+              # Fallback to Global Recovery ROM
               for rom in data:
                   if 'pipa' in rom['device'] and 'Global' in rom['device'] and rom['link'].endswith('.zip'):
                       print(rom['link'])
