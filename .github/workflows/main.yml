@@ -1,0 +1,84 @@
+name: Build Custom Recovery for Xiaomi Pad 6 (pipa)
+
+on:
+  workflow_dispatch:
+    inputs:
+      boot_link:
+        description: 'Pixeldrain Direct Link for boot.img'
+        required: true
+        type: string
+      vendor_boot_link:
+        description: 'Pixeldrain Direct Link for vendor_boot.img'
+        required: true
+        type: string
+      dtbo_link:
+        description: 'Pixeldrain Direct Link for dtbo.img'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository & Custom Files
+        uses: actions/checkout@v4
+
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update && sudo apt-get install -y \
+            git python3 gperf build-essential zip curl zlib1g-dev libx11-dev \
+            libgl1-mesa-dev fontconfig libxml2-utils xsltproc rsync bc
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+      - name: Install Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Initialize TWRP Source Manifest
+        run: |
+          mkdir twrp && cd twrp
+          repo init -u https://github.com/minimal-openrecovery/android_manifest_omni -b twrp-12.1
+
+      - name: Sync Manifest Sources
+        run: |
+          cd twrp
+          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j8
+
+      - name: Download User Components from Pixeldrain
+        run: |
+          mkdir -p input_images
+          echo "Downloading boot.img..."
+          curl -L "${{ github.event.inputs.boot_link }}" -o input_images/boot.img
+          echo "Downloading vendor_boot.img..."
+          curl -L "${{ github.event.inputs.vendor_boot_link }}" -o input_images/vendor_boot.img
+          echo "Downloading dtbo.img..."
+          curl -L "${{ github.event.inputs.dtbo_link }}" -o input_images/dtbo.img
+
+      - name: Inject Device Tree & Scripts
+        run: |
+          git clone https://github.com/nino088/device_xiaomi_pipa-TWRP twrp/device/xiaomi/pipa || true
+          
+          if [ -d "recovery_payloads" ]; then
+              mkdir -p twrp/device/xiaomi/pipa/recovery/root/sbin
+              cp -r recovery_payloads/* twrp/device/xiaomi/pipa/recovery/root/sbin/
+              chmod +x twrp/device/xiaomi/pipa/recovery/root/sbin/*
+          fi
+
+      - name: Start Compilation
+        run: |
+          cd twrp
+          export ALLOW_MISSING_DEPENDENCIES=true
+          source build/envsetup.sh
+          lunch omni_pipa-userdebug
+          mka recoveryimage
+
+      - name: Upload Recovery Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xiaomi-Pad-6-Custom-Recovery
+          path: twrp/out/target/product/pipa/recovery.img
+          
