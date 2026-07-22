@@ -108,7 +108,14 @@ jobs:
           fi
           
           echo "Downloading Stock ROM from: $ROM_LINK"
-          wget -q -O stock_rom.zip "$ROM_LINK"
+          # Using curl with a standard browser User-Agent to prevent 403 Forbidden blocks from Xiaomi servers
+          curl -L --fail --show-error -# -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -o stock_rom.zip "$ROM_LINK"
+          
+          echo "Checking downloaded file type to ensure it is a valid zip archive..."
+          if ! file stock_rom.zip | grep -q "Zip archive data"; then
+            echo "Error: Download failed or was blocked by the server. The file is not a valid zip."
+            exit 1
+          fi
           
           echo "Extracting payload.bin from ROM zip..."
           unzip -j stock_rom.zip payload.bin -d extraction/
