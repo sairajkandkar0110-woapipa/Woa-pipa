@@ -41,7 +41,7 @@ jobs:
       - name: Initialize TWRP Source Manifest
         run: |
           mkdir twrp && cd twrp
-          repo init -u https://github.com/minimal-openrecovery/android_manifest_omni -b twrp-12.1
+          repo init -u https://github.com/TeamWin/android_manifest.git -b twrp-12.1
 
       - name: Sync Manifest Sources
         run: |
@@ -58,15 +58,24 @@ jobs:
           echo "Downloading dtbo.img..."
           curl -L "${{ github.event.inputs.dtbo_link }}" -o input_images/dtbo.img
 
-      - name: Inject Device Tree & Scripts
+      - name: Clone Device Tree and Inject Custom Payloads
         run: |
-          git clone https://github.com/nino088/device_xiaomi_pipa-TWRP twrp/device/xiaomi/pipa || true
+          # Automatically clone the Xiaomi Pad 6 TWRP device tree into the correct source path
+          mkdir -p twrp/device/xiaomi
+          git clone https://github.com/nino088/device_xiaomi_pipa-TWRP twrp/device/xiaomi/pipa
           
-          if [ -d "recovery_payloads" ]; then
-              mkdir -p twrp/device/xiaomi/pipa/recovery/root/sbin
-              cp -r recovery_payloads/* twrp/device/xiaomi/pipa/recovery/root/sbin/
-              chmod +x twrp/device/xiaomi/pipa/recovery/root/sbin/*
-          fi
+          # Inject your custom scripts and partition/mkfs binaries straight into recovery root sbin
+          mkdir -p twrp/device/xiaomi/pipa/recovery/root/sbin
+          
+          # Copy everything from repository root if present
+          cp PARTITION twrp/device/xiaomi/pipa/recovery/root/sbin/partition 2>/dev/null || true
+          cp RESTORE twrp/device/xiaomi/pipa/recovery/root/sbin/restore 2>/dev/null || true
+          cp parted twrp/device/xiaomi/pipa/recovery/root/sbin/parted 2>/dev/null || true
+          cp mkfs.fat twrp/device/xiaomi/pipa/recovery/root/sbin/mkfs.fat 2>/dev/null || true
+          cp mkfs.ntfs twrp/device/xiaomi/pipa/recovery/root/sbin/mkfs.ntfs 2>/dev/null || true
+          
+          # Set proper execute permissions on all injected binaries and scripts
+          chmod +x twrp/device/xiaomi/pipa/recovery/root/sbin/*
 
       - name: Start Compilation
         run: |
