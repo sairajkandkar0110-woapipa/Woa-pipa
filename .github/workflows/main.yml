@@ -134,14 +134,18 @@ jobs:
           python3 -m twrpdtgen extracted_boot.img -o device_tree_output
           find device_tree_output -maxdepth 4 -type f
 
-      - name: Init TWRP minimal manifest
+      - name: Init TWRP minimal manifest (Shallow Sync)
         run: |
           mkdir -p twrp_build
           cd twrp_build
           git config --global user.email "actions@github.com"
           git config --global user.name "github-actions"
-          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ github.event.inputs.twrp_branch }}
-          repo sync -j$(nproc --all) --force-sync --no-tags --no-clone-bundle
+          
+          # Initialize with --depth=1 to avoid downloading historical git data
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ github.event.inputs.twrp_branch }} --depth=1
+          
+          # Use -c (current branch only) and optimized fetching to speed up sync
+          repo sync -c -j8 --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
 
       - name: Clean up repo sync leftovers
         run: |
@@ -161,17 +165,15 @@ jobs:
               cp -r device_tree_output/* "$DT_PATH"/ 2>/dev/null || true
           fi
           
-          cd "$DT_PATH"
-          
           # Alias omni_ to twrp_ so lunch twrp_pipa-eng succeeds
-          if [ -f "omni_${{ github.event.inputs.device_codename }}.mk" ]; then
-              cp "omni_${{ github.event.inputs.device_codename }}.mk" "twrp_${{ github.event.inputs.device_codename }}.mk"
-              sed -i 's/omni_/twrp_/g' "twrp_${{ github.event.inputs.device_codename }}.mk"
-              sed -i 's/omni_/twrp_/g' "AndroidProducts.mk"
+          if [ -f "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" ]; then
+              cp "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk"
+              sed -i 's/omni_/twrp_/g' "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk"
+              sed -i 's/omni_/twrp_/g' "$DT_PATH/AndroidProducts.mk"
           fi
 
-          echo "PRODUCT_PACKAGES += twrp_installer" >> "twrp_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
-          echo "PRODUCT_PACKAGES += twrp_installer" >> "omni_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
           
           ls -la "$DT_PATH"
 
