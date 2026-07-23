@@ -44,11 +44,10 @@ jobs:
             cd ntfs-3g_ntfsprogs-2022.10.3
             
             echo "Configuring ntfs-3g for static build..."
-            # Bypass GCC 14 strict errors with -Wno-implicit-function-declaration
             ./configure CFLAGS="-static -O2 -Wno-implicit-function-declaration" LDFLAGS="-static" --disable-shared --disable-ldconfig
             
-            echo "Compiling ntfs-3g..."
-            make
+            echo "Compiling ntfs-3g with 4 parallel jobs..."
+            make -j4
             
             echo "Copying ntfs-3g binaries to output..."
             cp src/ntfs-3g /output/ntfs-3g
@@ -62,8 +61,8 @@ jobs:
             git clone https://repo.or.cz/gptfdisk.git
             cd gptfdisk
             
-            echo "Compiling sgdisk statically..."
-            make sgdisk CXXFLAGS="-O2 -static" LDFLAGS="-static"
+            echo "Compiling sgdisk with 4 parallel jobs..."
+            make sgdisk -j4 CXXFLAGS="-O2 -static" LDFLAGS="-static"
             
             echo "Copying sgdisk binary to output..."
             cp sgdisk /output/sgdisk
@@ -127,4 +126,3 @@ jobs:
             ${{ github.workspace }}/output-binaries/sgdisk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
