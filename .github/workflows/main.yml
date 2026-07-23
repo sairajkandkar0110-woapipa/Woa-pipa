@@ -164,18 +164,27 @@ jobs:
 
       - name: Extract Decryption Blobs from Stock vendor.img
         run: |
-          echo "Extracting EROFS vendor image..."
+          echo "Mounting EROFS vendor image directly (bypassing fsck.erofs)..."
           mkdir -p extracted_vendor
           VENDOR_IMG=$(find extracted_* -name "vendor.img" | head -n 1)
-          fsck.erofs --extract=extracted_vendor "$VENDOR_IMG"
+          
+          # Mount the image as a loop device
+          sudo mount -t erofs -o loop "$VENDOR_IMG" extracted_vendor/
           
           echo "Copying keymaster and gatekeeper to device tree..."
           DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
           mkdir -p "$DT_PATH/recovery/root/vendor/lib64/hw"
           mkdir -p "$DT_PATH/recovery/root/vendor/bin/hw"
           
-          cp -rf extracted_vendor/lib64/hw/android.hardware.gatekeeper* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
-          cp -rf extracted_vendor/lib64/hw/android.hardware.keymaster* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
+          # Copy using sudo since mounted files might have strict root permissions
+          sudo cp -rf extracted_vendor/lib64/hw/android.hardware.gatekeeper* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
+          sudo cp -rf extracted_vendor/lib64/hw/android.hardware.keymaster* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
+          
+          # Fix ownership back to the github runner user
+          sudo chown -R $USER:$USER "$DT_PATH/recovery/root/"
+          
+          # Unmount the image to clean up
+          sudo umount extracted_vendor/
           
           echo "Adding Crypto flags to BoardConfig.mk..."
           echo "BOARD_USES_QCOM_FBE_DECRYPTION := true" >> "$DT_PATH/BoardConfig.mk"
