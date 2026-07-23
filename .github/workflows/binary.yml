@@ -19,11 +19,20 @@ jobs:
       - name: Create Output Directory
         run: mkdir -p ${{ github.workspace }}/output-binaries
 
-      - name: Install ARM64 Cross-Compiler & Static Libraries
+      - name: Patch APT Sources and Install ARM64 Toolchain
         run: |
-          echo "Adding ARM64 architecture to Ubuntu..."
+          echo "Patching Ubuntu sources for multiarch (adding ports.ubuntu.com)..."
+          sudo sed -i 's/^deb http/deb [arch=amd64,i386] http/g' /etc/apt/sources.list
+          sudo sed -i 's/^deb mirror/deb [arch=amd64,i386] mirror/g' /etc/apt/sources.list
+          cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64.list
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          EOF
+          
+          echo "Adding ARM64 architecture..."
           sudo dpkg --add-architecture arm64
-          sudo apt-get update -y || true
+          sudo apt-get update -y
           
           echo "Installing cross-compilers and ARM64 static libraries..."
           sudo apt-get install -y crossbuild-essential-arm64 uuid-dev:arm64 libpopt-dev:arm64 wget file
@@ -36,7 +45,6 @@ jobs:
           cd ntfs-3g_ntfsprogs-2022.10.3
           
           echo "Configuring ntfs-3g for cross-compilation..."
-          # We tell it we are building FOR aarch64, using the aarch64 gcc compiler
           ./configure --host=aarch64-linux-gnu CC=aarch64-linux-gnu-gcc \
                       CFLAGS="-static -O2 -Wno-implicit-function-declaration" LDFLAGS="-static" \
                       --disable-shared --disable-ldconfig
@@ -55,7 +63,6 @@ jobs:
           cd gptfdisk
           
           echo "Compiling sgdisk natively for ARM64..."
-          # We override the CXX compiler to the ARM64 one
           make sgdisk -j$(nproc) CXX=aarch64-linux-gnu-g++ CC=aarch64-linux-gnu-gcc CXXFLAGS="-O2 -static" LDFLAGS="-static"
           
           echo "Copying sgdisk binary to output..."
