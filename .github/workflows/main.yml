@@ -111,7 +111,6 @@ jobs:
           fi
           
           echo "Downloading Stock ROM from: $ROM_LINK"
-          # Using aria2c for multi-threaded downloading to bypass Xiaomi's slow server timeouts
           aria2c -x 16 -s 16 -j 16 -k 5M -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -d . -o stock_rom.zip "$ROM_LINK"
           
           echo "Extracting payload.bin from ROM zip..."
@@ -124,7 +123,6 @@ jobs:
           echo "Dumping boot.img and vendor.img from payload.bin..."
           ./payload-dumper-go -p boot,vendor extraction/payload.bin
           
-          # Locate extracted boot image
           BOOT_PATH=$(find extracted_* -name "boot.img" | head -n 1)
           cp "$BOOT_PATH" ./extracted_boot.img
           
@@ -154,39 +152,47 @@ jobs:
         run: |
           DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
           mkdir -p "$DT_PATH"
-          cp -r device_tree_output/*/. "$DT_PATH"/ 2>/dev/null || cp -r device_tree_output/. "$DT_PATH"/
           
-          echo "Configuring TWRP Flashable Installer..."
-          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
-          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          # Find the exact folder containing AndroidProducts.mk to prevent double-nesting
+          GEN_DT_DIR=$(find device_tree_output -name "AndroidProducts.mk" -exec dirname {} \;)
+          if [ -n "$GEN_DT_DIR" ]; then
+              cp -r "$GEN_DT_DIR"/* "$DT_PATH"/
+          else
+              cp -r device_tree_output/* "$DT_PATH"/ 2>/dev/null || true
+          fi
+          
+          cd "$DT_PATH"
+          
+          # Alias omni_ to twrp_ so lunch twrp_pipa-eng succeeds
+          if [ -f "omni_${{ github.event.inputs.device_codename }}.mk" ]; then
+              cp "omni_${{ github.event.inputs.device_codename }}.mk" "twrp_${{ github.event.inputs.device_codename }}.mk"
+              sed -i 's/omni_/twrp_/g' "twrp_${{ github.event.inputs.device_codename }}.mk"
+              sed -i 's/omni_/twrp_/g' "AndroidProducts.mk"
+          fi
+
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "twrp_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "omni_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
           
           ls -la "$DT_PATH"
 
       - name: Extract Decryption Blobs from Stock vendor.img
         run: |
-          echo "Mounting EROFS vendor image directly (bypassing fsck.erofs)..."
+          echo "Mounting EROFS vendor image directly..."
           mkdir -p extracted_vendor
           VENDOR_IMG=$(find extracted_* -name "vendor.img" | head -n 1)
           
-          # Mount the image as a loop device
           sudo mount -t erofs -o loop "$VENDOR_IMG" extracted_vendor/
           
-          echo "Copying keymaster and gatekeeper to device tree..."
           DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
           mkdir -p "$DT_PATH/recovery/root/vendor/lib64/hw"
           mkdir -p "$DT_PATH/recovery/root/vendor/bin/hw"
           
-          # Copy using sudo since mounted files might have strict root permissions
           sudo cp -rf extracted_vendor/lib64/hw/android.hardware.gatekeeper* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
           sudo cp -rf extracted_vendor/lib64/hw/android.hardware.keymaster* "$DT_PATH/recovery/root/vendor/lib64/hw/" 2>/dev/null || true
           
-          # Fix ownership back to the github runner user
           sudo chown -R $USER:$USER "$DT_PATH/recovery/root/"
-          
-          # Unmount the image to clean up
           sudo umount extracted_vendor/
           
-          echo "Adding Crypto flags to BoardConfig.mk..."
           echo "BOARD_USES_QCOM_FBE_DECRYPTION := true" >> "$DT_PATH/BoardConfig.mk"
           echo "BOARD_USES_METADATA_PARTITION := true" >> "$DT_PATH/BoardConfig.mk"
 
