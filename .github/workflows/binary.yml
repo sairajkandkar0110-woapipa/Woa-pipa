@@ -31,22 +31,23 @@ jobs:
           run: |
             echo "Installing build dependencies..."
             apk update
-            apk add --no-cache build-base git automake autoconf libtool \
+            apk add --no-cache build-base git automake autoconf libtool wget \
                     util-linux-dev util-linux-static popt-dev popt-static \
                     linux-headers file pkgconf gettext-dev libgcrypt-dev libgcrypt-static
 
             # ==========================================
-            # 1. Build ntfs-3g & mkfs.ntfs
+            # 1. Build ntfs-3g & mkfs.ntfs (STABLE RELEASE)
             # ==========================================
-            echo "Cloning ntfs-3g..."
-            git clone https://github.com/tuxera/ntfs-3g.git
-            cd ntfs-3g
+            echo "Downloading stable ntfs-3g release..."
+            wget https://tuxera.com/opensource/ntfs-3g_ntfsprogs-2022.10.3.tgz
+            tar -xf ntfs-3g_ntfsprogs-2022.10.3.tgz
+            cd ntfs-3g_ntfsprogs-2022.10.3
             
             echo "Configuring ntfs-3g for static build..."
-            ./autogen.sh
-            ./configure CFLAGS="-static -O2" LDFLAGS="-static" --disable-shared --disable-ldconfig
+            # Bypass GCC 14 strict errors with -Wno-implicit-function-declaration
+            ./configure CFLAGS="-static -O2 -Wno-implicit-function-declaration" LDFLAGS="-static" --disable-shared --disable-ldconfig
             
-            echo "Compiling ntfs-3g (Single-threaded for QEMU stability)..."
+            echo "Compiling ntfs-3g..."
             make
             
             echo "Copying ntfs-3g binaries to output..."
@@ -62,7 +63,7 @@ jobs:
             cd gptfdisk
             
             echo "Compiling sgdisk statically..."
-            make sgdisk CXXFLAGS="-O2" LDFLAGS="-static"
+            make sgdisk CXXFLAGS="-O2 -static" LDFLAGS="-static"
             
             echo "Copying sgdisk binary to output..."
             cp sgdisk /output/sgdisk
@@ -95,7 +96,6 @@ jobs:
           echo "Adding files to git..."
           git add ntfs-3g mkfs.ntfs sgdisk
           
-          # Only commit and push if the binaries actually changed/were added
           if git diff --staged --quiet; then
             echo "No changes to commit. Binaries are already up to date."
           else
