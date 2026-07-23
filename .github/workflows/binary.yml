@@ -14,7 +14,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          # We need full checkout to push back to the repo
           fetch-depth: 0 
 
       - name: Create Output Directory
@@ -47,8 +46,8 @@ jobs:
             ./autogen.sh
             ./configure CFLAGS="-static -O2" LDFLAGS="-static" --disable-shared --disable-ldconfig
             
-            echo "Compiling ntfs-3g..."
-            make -j$(nproc)
+            echo "Compiling ntfs-3g (Single-threaded for QEMU stability)..."
+            make
             
             echo "Copying ntfs-3g binaries to output..."
             cp src/ntfs-3g /output/ntfs-3g
