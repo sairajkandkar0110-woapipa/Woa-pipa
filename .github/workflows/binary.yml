@@ -1,4 +1,4 @@
-name: Build Static ARM64 Binaries (ntfs-3g & sgdisk)
+name: Build Static ARM64 Binaries (Native Cross-Compile)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build-arm64-binaries:
-    name: Compile Static Binaries via Alpine ARM64
+    name: Native Cross-Compile ARM64 Binaries
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Repository
@@ -19,67 +19,59 @@ jobs:
       - name: Create Output Directory
         run: mkdir -p ${{ github.workspace }}/output-binaries
 
-      - name: Compile Binaries in ARM64 Alpine Container
-        uses: uraimo/run-on-arch-action@v2
-        id: build
-        with:
-          arch: aarch64
-          distro: alpine_latest
-          githubToken: ${{ github.token }}
-          dockerRunArgs: |
-            --volume "${{ github.workspace }}/output-binaries:/output"
-          run: |
-            echo "Installing build dependencies..."
-            apk update
-            apk add --no-cache build-base git automake autoconf libtool wget \
-                    util-linux-dev util-linux-static popt-dev popt-static \
-                    linux-headers file pkgconf gettext-dev libgcrypt-dev libgcrypt-static
+      - name: Install ARM64 Cross-Compiler & Static Libraries
+        run: |
+          echo "Adding ARM64 architecture to Ubuntu..."
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update -y || true
+          
+          echo "Installing cross-compilers and ARM64 static libraries..."
+          sudo apt-get install -y crossbuild-essential-arm64 uuid-dev:arm64 libpopt-dev:arm64 wget file
 
-            # ==========================================
-            # 1. Build ntfs-3g & mkfs.ntfs (STABLE RELEASE)
-            # ==========================================
-            echo "Downloading stable ntfs-3g release..."
-            wget https://tuxera.com/opensource/ntfs-3g_ntfsprogs-2022.10.3.tgz
-            tar -xf ntfs-3g_ntfsprogs-2022.10.3.tgz
-            cd ntfs-3g_ntfsprogs-2022.10.3
-            
-            echo "Configuring ntfs-3g for static build..."
-            ./configure CFLAGS="-static -O2 -Wno-implicit-function-declaration" LDFLAGS="-static" --disable-shared --disable-ldconfig
-            
-            echo "Compiling ntfs-3g with 4 parallel jobs..."
-            make -j4
-            
-            echo "Copying ntfs-3g binaries to output..."
-            cp src/ntfs-3g /output/ntfs-3g
-            cp mkntfs/mkntfs /output/mkfs.ntfs
-            cd ..
+      - name: Build ntfs-3g & mkfs.ntfs (Native Speed)
+        run: |
+          echo "Downloading stable ntfs-3g release..."
+          wget https://tuxera.com/opensource/ntfs-3g_ntfsprogs-2022.10.3.tgz
+          tar -xf ntfs-3g_ntfsprogs-2022.10.3.tgz
+          cd ntfs-3g_ntfsprogs-2022.10.3
+          
+          echo "Configuring ntfs-3g for cross-compilation..."
+          # We tell it we are building FOR aarch64, using the aarch64 gcc compiler
+          ./configure --host=aarch64-linux-gnu CC=aarch64-linux-gnu-gcc \
+                      CFLAGS="-static -O2 -Wno-implicit-function-declaration" LDFLAGS="-static" \
+                      --disable-shared --disable-ldconfig
+          
+          echo "Compiling ntfs-3g (Multi-threaded Native Speed)..."
+          make -j$(nproc)
+          
+          echo "Copying ntfs-3g binaries to output..."
+          cp src/ntfs-3g ${{ github.workspace }}/output-binaries/ntfs-3g
+          cp mkntfs/mkntfs ${{ github.workspace }}/output-binaries/mkfs.ntfs
 
-            # ==========================================
-            # 2. Build sgdisk (gptfdisk)
-            # ==========================================
-            echo "Cloning gptfdisk..."
-            git clone https://repo.or.cz/gptfdisk.git
-            cd gptfdisk
-            
-            echo "Compiling sgdisk with 4 parallel jobs..."
-            make sgdisk -j4 CXXFLAGS="-O2 -static" LDFLAGS="-static"
-            
-            echo "Copying sgdisk binary to output..."
-            cp sgdisk /output/sgdisk
-            cd ..
+      - name: Build sgdisk (Native Speed)
+        run: |
+          echo "Cloning gptfdisk..."
+          git clone https://repo.or.cz/gptfdisk.git
+          cd gptfdisk
+          
+          echo "Compiling sgdisk natively for ARM64..."
+          # We override the CXX compiler to the ARM64 one
+          make sgdisk -j$(nproc) CXX=aarch64-linux-gnu-g++ CC=aarch64-linux-gnu-gcc CXXFLAGS="-O2 -static" LDFLAGS="-static"
+          
+          echo "Copying sgdisk binary to output..."
+          cp sgdisk ${{ github.workspace }}/output-binaries/sgdisk
 
-            # ==========================================
-            # 3. Verify Static Compilation
-            # ==========================================
-            echo "Verifying binaries are statically linked ARM64 executables..."
-            file /output/ntfs-3g
-            file /output/mkfs.ntfs
-            file /output/sgdisk
-            
-            # Strip debug symbols to reduce file size
-            strip /output/ntfs-3g
-            strip /output/mkfs.ntfs
-            strip /output/sgdisk
+      - name: Verify and Strip Binaries
+        run: |
+          echo "Verifying binaries are statically linked ARM64 executables..."
+          file ${{ github.workspace }}/output-binaries/ntfs-3g
+          file ${{ github.workspace }}/output-binaries/mkfs.ntfs
+          file ${{ github.workspace }}/output-binaries/sgdisk
+          
+          echo "Stripping debug symbols..."
+          aarch64-linux-gnu-strip ${{ github.workspace }}/output-binaries/ntfs-3g
+          aarch64-linux-gnu-strip ${{ github.workspace }}/output-binaries/mkfs.ntfs
+          aarch64-linux-gnu-strip ${{ github.workspace }}/output-binaries/sgdisk
 
       - name: Commit and Push Binaries to Repository Root
         run: |
@@ -99,7 +91,7 @@ jobs:
             echo "No changes to commit. Binaries are already up to date."
           else
             echo "Committing new binaries..."
-            git commit -m "Auto-compile static ARM64 binaries (ntfs-3g, mkfs.ntfs, sgdisk)"
+            git commit -m "Auto-compile static ARM64 binaries via cross-compiler"
             git push
           fi
 
@@ -113,7 +105,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ARM64 Static Binaries (ntfs-3g & sgdisk)
           body: |
-            Fully static `aarch64` binaries compiled via Alpine Linux (musl libc).
+            Fully static `aarch64` binaries compiled natively via `crossbuild-essential-arm64`.
             Ready to be dropped directly into Android Recovery environments (TWRP/OrangeFox).
             
             **Included files:**
@@ -126,3 +118,4 @@ jobs:
             ${{ github.workspace }}/output-binaries/sgdisk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
