@@ -1,0 +1,107 @@
+name: Build Static ARM64 Binaries (ntfs-3g & sgdisk)
+
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64-binaries:
+    name: Compile Static Binaries via Alpine ARM64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create Output Directory
+        run: mkdir -p ${{ github.workspace }}/output-binaries
+
+      - name: Compile Binaries in ARM64 Alpine Container
+        uses: uraimo/run-on-arch-action@v2
+        id: build
+        with:
+          arch: aarch64
+          distro: alpine_latest
+          githubToken: ${{ github.token }}
+          # Mount our output folder into the container
+          dockerRunArgs: |
+            --volume "${{ github.workspace }}/output-binaries:/output"
+          run: |
+            echo "Installing build dependencies..."
+            apk update
+            apk add --no-cache build-base git automake autoconf libtool \
+                    util-linux-dev util-linux-static popt-dev popt-static \
+                    linux-headers file
+
+            # ==========================================
+            # 1. Build ntfs-3g & mkfs.ntfs
+            # ==========================================
+            echo "Cloning ntfs-3g..."
+            git clone https://github.com/tuxera/ntfs-3g.git
+            cd ntfs-3g
+            
+            echo "Configuring ntfs-3g for static build..."
+            ./autogen.sh
+            # Force static linking and disable shared libraries
+            ./configure CFLAGS="-static -O2" LDFLAGS="-static" --disable-shared --disable-ldconfig
+            
+            echo "Compiling ntfs-3g..."
+            make -j$(nproc)
+            
+            echo "Copying ntfs-3g binaries to output..."
+            cp src/ntfs-3g /output/ntfs-3g
+            cp mkntfs/mkntfs /output/mkfs.ntfs
+            cd ..
+
+            # ==========================================
+            # 2. Build sgdisk (gptfdisk)
+            # ==========================================
+            echo "Cloning gptfdisk..."
+            git clone https://repo.or.cz/gptfdisk.git
+            cd gptfdisk
+            
+            echo "Compiling sgdisk statically..."
+            # sgdisk requires libuuid and libpopt, which we installed static versions of
+            make sgdisk CXXFLAGS="-O2" LDFLAGS="-static"
+            
+            echo "Copying sgdisk binary to output..."
+            cp sgdisk /output/sgdisk
+            cd ..
+
+            # ==========================================
+            # 3. Verify Static Compilation
+            # ==========================================
+            echo "Verifying binaries are statically linked ARM64 executables..."
+            file /output/ntfs-3g
+            file /output/mkfs.ntfs
+            file /output/sgdisk
+            
+            # Strip debug symbols to reduce file size
+            strip /output/ntfs-3g
+            strip /output/mkfs.ntfs
+            strip /output/sgdisk
+
+      - name: Generate Release Tag
+        id: tag
+        run: echo "RELEASE_TAG=arm64-binaries-$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+
+      - name: Upload Binaries to GitHub Releases
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ARM64 Static Binaries (ntfs-3g & sgdisk)
+          body: |
+            Fully static `aarch64` binaries compiled via Alpine Linux (musl libc).
+            Ready to be dropped directly into Android Recovery environments (TWRP/OrangeFox).
+            
+            **Included files:**
+            * `sgdisk` - Command-line GUID partition table manipulator
+            * `ntfs-3g` - NTFS read/write driver
+            * `mkfs.ntfs` - NTFS formatting utility
+          files: |
+            ${{ github.workspace }}/output-binaries/ntfs-3g
+            ${{ github.workspace }}/output-binaries/mkfs.ntfs
+            ${{ github.workspace }}/output-binaries/sgdisk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
