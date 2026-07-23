@@ -54,7 +54,8 @@ jobs:
           
           echo "Copying ntfs-3g binaries to output..."
           cp src/ntfs-3g ${{ github.workspace }}/output-binaries/ntfs-3g
-          cp mkntfs/mkntfs ${{ github.workspace }}/output-binaries/mkfs.ntfs
+          # FIXED PATH HERE: ntfsprogs/mkntfs
+          cp ntfsprogs/mkntfs ${{ github.workspace }}/output-binaries/mkfs.ntfs
 
       - name: Build sgdisk (Native Speed)
         run: |
