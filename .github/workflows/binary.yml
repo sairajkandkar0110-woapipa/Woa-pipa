@@ -37,7 +37,7 @@ jobs:
           echo "Installing cross-compilers and ARM64 static libraries..."
           sudo apt-get install -y crossbuild-essential-arm64 uuid-dev:arm64 libpopt-dev:arm64 wget file
 
-      - name: Build ntfs-3g & mkfs.ntfs (Native Speed)
+      - name: Build ntfs-3g (Native Speed)
         run: |
           echo "Downloading stable ntfs-3g release..."
           wget https://tuxera.com/opensource/ntfs-3g_ntfsprogs-2022.10.3.tgz
@@ -52,16 +52,15 @@ jobs:
           echo "Compiling ntfs-3g (Multi-threaded Native Speed)..."
           make -j$(nproc)
           
-          echo "Copying ntfs-3g binaries to output..."
+          echo "Copying ntfs-3g binary to output..."
           cp src/ntfs-3g ${{ github.workspace }}/output-binaries/ntfs-3g
-          # FIXED PATH HERE: ntfsprogs/mkntfs
-          cp ntfsprogs/mkntfs ${{ github.workspace }}/output-binaries/mkfs.ntfs
 
       - name: Build sgdisk (Native Speed)
         run: |
-          echo "Cloning gptfdisk..."
-          git clone https://repo.or.cz/gptfdisk.git
-          cd gptfdisk
+          echo "Downloading stable gptfdisk release..."
+          wget https://sourceforge.net/projects/gptfdisk/files/gptfdisk/1.0.10/gptfdisk-1.0.10.tar.gz
+          tar -xf gptfdisk-1.0.10.tar.gz
+          cd gptfdisk-1.0.10
           
           echo "Compiling sgdisk natively for ARM64..."
           make sgdisk -j$(nproc) CXX=aarch64-linux-gnu-g++ CC=aarch64-linux-gnu-gcc CXXFLAGS="-O2 -static" LDFLAGS="-static"
@@ -73,19 +72,16 @@ jobs:
         run: |
           echo "Verifying binaries are statically linked ARM64 executables..."
           file ${{ github.workspace }}/output-binaries/ntfs-3g
-          file ${{ github.workspace }}/output-binaries/mkfs.ntfs
           file ${{ github.workspace }}/output-binaries/sgdisk
           
           echo "Stripping debug symbols..."
           aarch64-linux-gnu-strip ${{ github.workspace }}/output-binaries/ntfs-3g
-          aarch64-linux-gnu-strip ${{ github.workspace }}/output-binaries/mkfs.ntfs
           aarch64-linux-gnu-strip ${{ github.workspace }}/output-binaries/sgdisk
 
       - name: Commit and Push Binaries to Repository Root
         run: |
           echo "Copying binaries to repository root..."
           cp ${{ github.workspace }}/output-binaries/ntfs-3g ${{ github.workspace }}/ntfs-3g
-          cp ${{ github.workspace }}/output-binaries/mkfs.ntfs ${{ github.workspace }}/mkfs.ntfs
           cp ${{ github.workspace }}/output-binaries/sgdisk ${{ github.workspace }}/sgdisk
           
           echo "Configuring Git..."
@@ -93,13 +89,13 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
           echo "Adding files to git..."
-          git add ntfs-3g mkfs.ntfs sgdisk
+          git add ntfs-3g sgdisk
           
           if git diff --staged --quiet; then
             echo "No changes to commit. Binaries are already up to date."
           else
             echo "Committing new binaries..."
-            git commit -m "Auto-compile static ARM64 binaries via cross-compiler"
+            git commit -m "Auto-compile static ARM64 binaries (ntfs-3g, sgdisk) via cross-compiler"
             git push
           fi
 
@@ -119,10 +115,8 @@ jobs:
             **Included files:**
             * `sgdisk` - Command-line GUID partition table manipulator
             * `ntfs-3g` - NTFS read/write driver
-            * `mkfs.ntfs` - NTFS formatting utility
           files: |
             ${{ github.workspace }}/output-binaries/ntfs-3g
-            ${{ github.workspace }}/output-binaries/mkfs.ntfs
             ${{ github.workspace }}/output-binaries/sgdisk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
