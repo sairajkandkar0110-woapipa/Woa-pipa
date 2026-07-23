@@ -244,6 +244,11 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
+          
+          # Fix for read-only filesystem crash
+          export CCACHE_DIR=$(pwd)/.ccache
+          mkdir -p $CCACHE_DIR
+          
           ccache -M 5G
           lunch twrp_${DEVICE_CODENAME}-eng
           mka bootimage -j$(nproc --all)
