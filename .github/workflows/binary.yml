@@ -1,7 +1,7 @@
 name: Build Static ARM64 Binaries (ntfs-3g & sgdisk)
 
 on:
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,6 +13,9 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          # We need full checkout to push back to the repo
+          fetch-depth: 0 
 
       - name: Create Output Directory
         run: mkdir -p ${{ github.workspace }}/output-binaries
@@ -24,7 +27,6 @@ jobs:
           arch: aarch64
           distro: alpine_latest
           githubToken: ${{ github.token }}
-          # Mount our output folder into the container
           dockerRunArgs: |
             --volume "${{ github.workspace }}/output-binaries:/output"
           run: |
@@ -32,7 +34,7 @@ jobs:
             apk update
             apk add --no-cache build-base git automake autoconf libtool \
                     util-linux-dev util-linux-static popt-dev popt-static \
-                    linux-headers file
+                    linux-headers file pkgconf gettext-dev libgcrypt-dev libgcrypt-static
 
             # ==========================================
             # 1. Build ntfs-3g & mkfs.ntfs
@@ -43,7 +45,6 @@ jobs:
             
             echo "Configuring ntfs-3g for static build..."
             ./autogen.sh
-            # Force static linking and disable shared libraries
             ./configure CFLAGS="-static -O2" LDFLAGS="-static" --disable-shared --disable-ldconfig
             
             echo "Compiling ntfs-3g..."
@@ -62,7 +63,6 @@ jobs:
             cd gptfdisk
             
             echo "Compiling sgdisk statically..."
-            # sgdisk requires libuuid and libpopt, which we installed static versions of
             make sgdisk CXXFLAGS="-O2" LDFLAGS="-static"
             
             echo "Copying sgdisk binary to output..."
@@ -81,6 +81,29 @@ jobs:
             strip /output/ntfs-3g
             strip /output/mkfs.ntfs
             strip /output/sgdisk
+
+      - name: Commit and Push Binaries to Repository Root
+        run: |
+          echo "Copying binaries to repository root..."
+          cp ${{ github.workspace }}/output-binaries/ntfs-3g ${{ github.workspace }}/ntfs-3g
+          cp ${{ github.workspace }}/output-binaries/mkfs.ntfs ${{ github.workspace }}/mkfs.ntfs
+          cp ${{ github.workspace }}/output-binaries/sgdisk ${{ github.workspace }}/sgdisk
+          
+          echo "Configuring Git..."
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          echo "Adding files to git..."
+          git add ntfs-3g mkfs.ntfs sgdisk
+          
+          # Only commit and push if the binaries actually changed/were added
+          if git diff --staged --quiet; then
+            echo "No changes to commit. Binaries are already up to date."
+          else
+            echo "Committing new binaries..."
+            git commit -m "Auto-compile static ARM64 binaries (ntfs-3g, mkfs.ntfs, sgdisk)"
+            git push
+          fi
 
       - name: Generate Release Tag
         id: tag
@@ -105,3 +128,4 @@ jobs:
             ${{ github.workspace }}/output-binaries/sgdisk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
