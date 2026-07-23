@@ -1,12 +1,16 @@
 name: Build Modded TWRP (pipa) with WOA tools & Decryption
 
 on:
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
     inputs:
       stock_rom_link:
-        description: 'Direct link to Stock ROM ZIP (Leave blank to auto-fetch latest)'
+        description: 'Direct link to Stock ROM ZIP'
         required: false
-        default: ''
+        default: 'https://bn.d.miui.com/OS2.0.14.0.UMZINXM/pipa_in_global-ota_full-OS2.0.14.0.UMZINXM-user-14.0-00783b8e7f.zip'
       device_codename:
         description: 'Device codename'
         required: true
@@ -75,40 +79,14 @@ jobs:
 
       - name: Download Stock ROM & Extract Partition Payloads
         run: |
+          # Use manual input if available, otherwise default to the hardcoded link (for auto push runs)
           ROM_LINK="${{ github.event.inputs.stock_rom_link }}"
+          if [ -z "$ROM_LINK" ]; then
+            ROM_LINK="https://bn.d.miui.com/OS2.0.14.0.UMZINXM/pipa_in_global-ota_full-OS2.0.14.0.UMZINXM-user-14.0-00783b8e7f.zip"
+          fi
           
-          # Strip accidental leading/trailing spaces from manual input
+          # Strip accidental leading/trailing spaces
           ROM_LINK=$(echo "$ROM_LINK" | tr -d '[:space:]')
-          
-          # Auto-fetch if input box was left empty
-          if [ -z "$ROM_LINK" ]; then
-            echo "No manual link provided. Auto-fetching the latest Recovery ROM for pipa..."
-            ROM_LINK=$(python3 -c "
-          import urllib.request, json
-          try:
-              req = urllib.request.Request('https://raw.githubusercontent.com/XiaomiFirmwareUpdater/miui-updates-tracker/master/data/latest.json')
-              data = json.loads(urllib.request.urlopen(req).read().decode())
-              
-              # First try India Recovery ROM
-              for rom in data:
-                  if 'pipa' in rom['device'] and 'India' in rom['device'] and rom['link'].endswith('.zip'):
-                      print(rom['link'].strip())
-                      exit(0)
-                      
-              # Fallback to Global Recovery ROM
-              for rom in data:
-                  if 'pipa' in rom['device'] and 'Global' in rom['device'] and rom['link'].endswith('.zip'):
-                      print(rom['link'].strip())
-                      exit(0)
-          except Exception as e:
-              pass
-          ")
-          fi
-          
-          if [ -z "$ROM_LINK" ]; then
-            echo "Failed to auto-fetch ROM link. Please provide one manually in the workflow inputs."
-            exit 1
-          fi
           
           echo "Downloading Stock ROM from: $ROM_LINK"
           aria2c -x 16 -s 16 -j 16 -k 5M -U "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" -d . -o stock_rom.zip "$ROM_LINK"
@@ -141,7 +119,13 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "github-actions"
           
-          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b ${{ github.event.inputs.twrp_branch }} --depth=1
+          # Default fallback values for automated push runs
+          TWRP_BRANCH="${{ github.event.inputs.twrp_branch }}"
+          if [ -z "$TWRP_BRANCH" ]; then
+            TWRP_BRANCH="twrp-12.1"
+          fi
+          
+          repo init -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b $TWRP_BRANCH --depth=1
           repo sync -c -j8 --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
 
       - name: Clean up repo sync leftovers
@@ -151,7 +135,13 @@ jobs:
 
       - name: Place generated device tree & Configure Installer
         run: |
-          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          # Default fallback values for automated push runs
+          DEVICE_VENDOR="${{ github.event.inputs.device_vendor }}"
+          DEVICE_CODENAME="${{ github.event.inputs.device_codename }}"
+          if [ -z "$DEVICE_VENDOR" ]; then DEVICE_VENDOR="xiaomi"; fi
+          if [ -z "$DEVICE_CODENAME" ]; then DEVICE_CODENAME="pipa"; fi
+          
+          DT_PATH="twrp_build/device/$DEVICE_VENDOR/$DEVICE_CODENAME"
           mkdir -p "$DT_PATH"
           
           # Find the exact folder containing AndroidProducts.mk to prevent double-nesting
@@ -168,31 +158,36 @@ jobs:
           sed -i 's/PRODUCT_STATIC_BOOT_CONTROL_HAL/OBSOLETE_BOOT_CONTROL_HAL/g' "$DT_PATH/BoardConfig.mk" 2>/dev/null || true
           
           # Fully convert the device tree from 'omni' to 'twrp' targets
-          if [ -f "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" ]; then
-              mv "$DT_PATH/omni_${{ github.event.inputs.device_codename }}.mk" "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk"
+          if [ -f "$DT_PATH/omni_${DEVICE_CODENAME}.mk" ]; then
+              mv "$DT_PATH/omni_${DEVICE_CODENAME}.mk" "$DT_PATH/twrp_${DEVICE_CODENAME}.mk"
               
               # Fix the internal vendor inheritance path (vendor/omni -> vendor/twrp)
-              sed -i 's/vendor\/omni/vendor\/twrp/g' "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk"
+              sed -i 's/vendor\/omni/vendor\/twrp/g' "$DT_PATH/twrp_${DEVICE_CODENAME}.mk"
               
               # Fix target names
-              sed -i 's/omni_/twrp_/g' "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk"
-              sed -i 's/omni_/twrp_/g' "$DT_PATH/AndroidProducts.mk"
-              sed -i 's/omni_/twrp_/g' "$DT_PATH/vendorsetup.sh" 2>/dev/null || true
+              sed -i "s/omni_/twrp_/g" "$DT_PATH/twrp_${DEVICE_CODENAME}.mk"
+              sed -i "s/omni_/twrp_/g" "$DT_PATH/AndroidProducts.mk"
+              sed -i "s/omni_/twrp_/g" "$DT_PATH/vendorsetup.sh" 2>/dev/null || true
           fi
 
-          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/twrp_${{ github.event.inputs.device_codename }}.mk" 2>/dev/null || true
+          echo "PRODUCT_PACKAGES += twrp_installer" >> "$DT_PATH/twrp_${DEVICE_CODENAME}.mk" 2>/dev/null || true
           
           ls -la "$DT_PATH"
 
       - name: Extract Decryption Blobs from Stock vendor.img
         run: |
+          DEVICE_VENDOR="${{ github.event.inputs.device_vendor }}"
+          DEVICE_CODENAME="${{ github.event.inputs.device_codename }}"
+          if [ -z "$DEVICE_VENDOR" ]; then DEVICE_VENDOR="xiaomi"; fi
+          if [ -z "$DEVICE_CODENAME" ]; then DEVICE_CODENAME="pipa"; fi
+          
           echo "Mounting EROFS vendor image directly..."
           mkdir -p extracted_vendor
           VENDOR_IMG=$(find extracted_* -name "vendor.img" | head -n 1)
           
           sudo mount -t erofs -o loop "$VENDOR_IMG" extracted_vendor/
           
-          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          DT_PATH="twrp_build/device/$DEVICE_VENDOR/$DEVICE_CODENAME"
           mkdir -p "$DT_PATH/recovery/root/vendor/lib64/hw"
           mkdir -p "$DT_PATH/recovery/root/vendor/bin/hw"
           
@@ -207,7 +202,12 @@ jobs:
 
       - name: Inject WOA binaries and trigger scripts into recovery root
         run: |
-          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          DEVICE_VENDOR="${{ github.event.inputs.device_vendor }}"
+          DEVICE_CODENAME="${{ github.event.inputs.device_codename }}"
+          if [ -z "$DEVICE_VENDOR" ]; then DEVICE_VENDOR="xiaomi"; fi
+          if [ -z "$DEVICE_CODENAME" ]; then DEVICE_CODENAME="pipa"; fi
+          
+          DT_PATH="twrp_build/device/$DEVICE_VENDOR/$DEVICE_CODENAME"
           SBIN_PATH="$DT_PATH/recovery/root/sbin"
           mkdir -p "$SBIN_PATH"
 
@@ -225,19 +225,27 @@ jobs:
 
       - name: Verify BoardConfig references recovery root
         run: |
-          DT_PATH="twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}"
+          DEVICE_VENDOR="${{ github.event.inputs.device_vendor }}"
+          DEVICE_CODENAME="${{ github.event.inputs.device_codename }}"
+          if [ -z "$DEVICE_VENDOR" ]; then DEVICE_VENDOR="xiaomi"; fi
+          if [ -z "$DEVICE_CODENAME" ]; then DEVICE_CODENAME="pipa"; fi
+          
+          DT_PATH="twrp_build/device/$DEVICE_VENDOR/$DEVICE_CODENAME"
           BOARDCONFIG="$DT_PATH/BoardConfig.mk"
           grep -n "RECOVERY_ROOT\|TARGET_COPY_OUT" "$BOARDCONFIG" || true
 
       - name: Build TWRP boot image & flashable installer
         run: |
+          DEVICE_CODENAME="${{ github.event.inputs.device_codename }}"
+          if [ -z "$DEVICE_CODENAME" ]; then DEVICE_CODENAME="pipa"; fi
+          
           cd twrp_build
           source build/envsetup.sh
           export ALLOW_MISSING_DEPENDENCIES=true
           export USE_CCACHE=1
           export CCACHE_EXEC=$(which ccache)
           ccache -M 5G
-          lunch twrp_${{ github.event.inputs.device_codename }}-eng
+          lunch twrp_${DEVICE_CODENAME}-eng
           mka bootimage -j$(nproc --all)
           
           echo "Building Flashable ZIP target explicitly..."
@@ -250,8 +258,11 @@ jobs:
       - name: Locate build output
         id: find_output
         run: |
-          OUT_IMG=$(find twrp_build/out/target/product/${{ github.event.inputs.device_codename }} -maxdepth 1 -iname "boot.img" | head -n1)
-          OUT_ZIP=$(find twrp_build/out/target/product/${{ github.event.inputs.device_codename }} -maxdepth 1 -iname "*twrp*.zip" | head -n1)
+          DEVICE_CODENAME="${{ github.event.inputs.device_codename }}"
+          if [ -z "$DEVICE_CODENAME" ]; then DEVICE_CODENAME="pipa"; fi
+          
+          OUT_IMG=$(find twrp_build/out/target/product/${DEVICE_CODENAME} -maxdepth 1 -iname "boot.img" | head -n1)
+          OUT_ZIP=$(find twrp_build/out/target/product/${DEVICE_CODENAME} -maxdepth 1 -iname "*twrp*.zip" | head -n1)
           echo "img_path=$OUT_IMG" >> "$GITHUB_OUTPUT"
           echo "zip_path=$OUT_ZIP" >> "$GITHUB_OUTPUT"
           echo "Found IMG: $OUT_IMG"
@@ -261,7 +272,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: steps.find_output.outputs.img_path != ''
         with:
-          name: TWRP-${{ github.event.inputs.device_codename }}-boot-modded-WOA
+          name: TWRP-pipa-boot-modded-WOA
           path: ${{ steps.find_output.outputs.img_path }}
           retention-days: 14
 
@@ -269,14 +280,14 @@ jobs:
         uses: actions/upload-artifact@v4
         if: steps.find_output.outputs.zip_path != ''
         with:
-          name: TWRP-${{ github.event.inputs.device_codename }}-Flashable-Installer-WOA
+          name: TWRP-pipa-Flashable-Installer-WOA
           path: ${{ steps.find_output.outputs.zip_path }}
           retention-days: 14
 
       - name: Upload generated device tree too
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.device_codename }}-device-tree
-          path: twrp_build/device/${{ github.event.inputs.device_vendor }}/${{ github.event.inputs.device_codename }}
+          name: pipa-device-tree
+          path: twrp_build/device/xiaomi/pipa
           retention-days: 14
           
