@@ -66,15 +66,22 @@ fi
 echo "[*] Removing current userdata partition (Index: $USERDATA_NUM)..."
 parted -s "$BLOCK_DEV" rm "$USERDATA_NUM"
 
-# Step 6: Recreate userdata utilizing the original start boundary up to all remaining space (-0MB)
-echo "[*] Recreating userdata to consume all remaining free space..."
-parted -s "$BLOCK_DEV" mkpart userdata ext4 "$USER_START" -0MB
+# Step 6: Recreate userdata utilizing the original start boundary up to all remaining space (100%)
+echo "[*] Recreating userdata to consume all remaining free space (100%)..."
+parted -s "$BLOCK_DEV" mkpart userdata ext4 "$USER_START" 100%
 
-# Step 7: Finalize and display final layout
+# Step 7: Finalize and force kernel refresh
 echo "[*] Finalizing partition table changes..."
 parted -s "$BLOCK_DEV" print
-partprobe "$BLOCK_DEV" 2>/dev/null || sleep 2
+
+echo ""
+echo "[*] Forcing kernel partition refresh..."
+partprobe "$BLOCK_DEV" 2>/dev/null
+sgdisk --rereadpt "$BLOCK_DEV" 2>/dev/null
+sleep 3
 
 echo "=================================================="
 echo "    Restoration Complete! Layout Reverted.        "
+echo "    NOTE: You MUST go to Wipe -> Format Data in   "
+echo "    OrangeFox now so Android can boot!            "
 echo "=================================================="
