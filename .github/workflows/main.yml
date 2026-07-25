@@ -111,6 +111,11 @@ jobs:
         DEVICE_TREE_BRANCH="${{ inputs.DEVICE_TREE_BRANCH }}"
         DEVICE_PATH="${{ inputs.DEVICE_PATH }}"
         
+        # Fallbacks just in case inputs are empty during manual triggers
+        DEVICE_TREE="${DEVICE_TREE:-https://github.com/PipaDB/OFRP-device_xiaomi_pipa}"
+        DEVICE_TREE_BRANCH="${DEVICE_TREE_BRANCH:-fox_12.1-a16}"
+        DEVICE_PATH="${DEVICE_PATH:-device/xiaomi/pipa}"
+        
         cd ${GITHUB_WORKSPACE}/TWRP
         echo "Cloning device tree from $DEVICE_TREE (branch: $DEVICE_TREE_BRANCH) into $DEVICE_PATH..."
         git clone "$DEVICE_TREE" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
@@ -120,6 +125,7 @@ jobs:
     - name: Inject WOA Formatting Binaries into Recovery Root
       run: |
         DEVICE_PATH="${{ inputs.DEVICE_PATH }}"
+        DEVICE_PATH="${DEVICE_PATH:-device/xiaomi/pipa}"
         
         SBIN_PATH="${GITHUB_WORKSPACE}/TWRP/$DEVICE_PATH/recovery/root/sbin"
         mkdir -p "$SBIN_PATH"
@@ -136,7 +142,9 @@ jobs:
     - name: Building TWRP
       run: |
         DEVICE_NAME="${{ inputs.DEVICE_NAME }}"
+        DEVICE_NAME="${DEVICE_NAME:-pipa}"
         BUILD_TARGET="${{ inputs.BUILD_TARGET }}"
+        BUILD_TARGET="${BUILD_TARGET:-boot}"
         
         cd ${GITHUB_WORKSPACE}/TWRP
         set +e
@@ -159,6 +167,7 @@ jobs:
     - name: Set Release Properties
       run: |
         DEVICE_TREE="${{ inputs.DEVICE_TREE }}"
+        DEVICE_TREE="${DEVICE_TREE:-https://github.com/PipaDB/OFRP-device_xiaomi_pipa}"
         echo "BUILD_DATE=$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
         DEVICE_TREE_URL="$DEVICE_TREE"
         if [[ "${DEVICE_TREE_URL}" == *.git ]]; then
