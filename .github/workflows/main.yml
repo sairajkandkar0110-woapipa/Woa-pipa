@@ -76,7 +76,7 @@ jobs:
     - name: Build Environment & ZRAM Setup
       run: |
         sudo apt-get update
-        sudo apt install aria2 linux-modules-extra-$(uname -r) zram-tools -y
+        sudo apt install aria2 ccache linux-modules-extra-$(uname -r) zram-tools -y
         
         echo "Setting up ZRAM..."
         sudo modprobe zram
@@ -111,7 +111,6 @@ jobs:
         DEVICE_TREE_BRANCH="${{ inputs.DEVICE_TREE_BRANCH }}"
         DEVICE_PATH="${{ inputs.DEVICE_PATH }}"
         
-        # Fallbacks just in case inputs are empty during manual triggers
         DEVICE_TREE="${DEVICE_TREE:-https://github.com/PipaDB/OFRP-device_xiaomi_pipa}"
         DEVICE_TREE_BRANCH="${DEVICE_TREE_BRANCH:-fox_12.1-a16}"
         DEVICE_PATH="${DEVICE_PATH:-device/xiaomi/pipa}"
@@ -160,7 +159,7 @@ jobs:
         export ALLOW_MISSING_DEPENDENCIES=true
         set -e
         
-        lunch omni_${DEVICE_NAME}-eng
+        lunch twrp_${DEVICE_NAME}-eng
         make clean
         mka adbd ${BUILD_TARGET}image
 
