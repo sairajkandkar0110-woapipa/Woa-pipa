@@ -92,6 +92,11 @@ jobs:
         TWRP_BRANCH="${{ inputs.TWRP_BRANCH }}"
         TWRP_BRANCH=${TWRP_BRANCH:-android-12.1}
         
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        export PATH="${HOME}/bin:${PATH}"
+        
         mkdir -p ${GITHUB_WORKSPACE}/TWRP
         cd ${GITHUB_WORKSPACE}/TWRP
         git config --global user.name "github-actions"
@@ -182,3 +187,4 @@ jobs:
           **Included WOA Flasher Integration:**
           * Embedded `mkfs.ntfs`, `mkfs.fat`, and `parted` binaries inside recovery `sbin`.
           * Active support for executing Windows deployment scripts (`partition`/`restore`).
+          
