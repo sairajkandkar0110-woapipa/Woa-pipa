@@ -117,6 +117,28 @@ jobs:
         cd $DEVICE_PATH
         echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
+    - name: Patch Device Tree for A14/A16 Compatibility
+      run: |
+        MANIFEST_BRANCH="${{ inputs.MANIFEST_BRANCH }}"
+        MANIFEST_BRANCH=${MANIFEST_BRANCH:-14.1}
+        DEVICE_PATH="${{ inputs.DEVICE_PATH }}"
+        DEVICE_PATH=${DEVICE_PATH:-device/xiaomi/pipa}
+        
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_$MANIFEST_BRANCH/$DEVICE_PATH
+        
+        echo "Patching VINTF manifest for libvintf compatibility..."
+        find . -type f -name "manifest.xml" -exec sed -i 's/version="9.0"/version="8.0"/g' {} +
+        find . -type f -name "manifest.xml" -exec sed -i 's/version="10.0"/version="8.0"/g' {} +
+
+        echo "Injecting Android 14/16 Build Broken rules..."
+        if [ -f "BoardConfig.mk" ]; then
+          echo "" >> BoardConfig.mk
+          echo "# --- 14.1/16.1 Compatibility Flags ---" >> BoardConfig.mk
+          echo "BUILD_BROKEN_ELF_PREBUILT := true" >> BoardConfig.mk
+          echo "BUILD_BROKEN_DUP_RULES := true" >> BoardConfig.mk
+          echo "BUILD_BROKEN_MISSING_REQUIRED_MODULES := true" >> BoardConfig.mk
+        fi
+
     - name: Building OrangeFox
       run: |
         MANIFEST_BRANCH="${{ inputs.MANIFEST_BRANCH }}"
