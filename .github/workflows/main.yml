@@ -1,10 +1,4 @@
 name: Build Modded TWRP (pipa) with WOA Flasher
-
-on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
     inputs:
       TWRP_BRANCH:
