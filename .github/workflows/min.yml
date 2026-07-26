@@ -1,4 +1,4 @@
-Name: Build OrangeFox (pipa)
+name: Build OrangeFox (pipa)
 
 on:
   push:
