@@ -1,0 +1,168 @@
+name: V4-MODDED TWRP BUILD (PIPA)
+
+on:
+  workflow_dispatch:
+  
+env:
+  # ======= CONFIGURABLE VARIABLES =======
+  MANIFEST_URL: https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git
+  MANIFEST_BRANCH: twrp-12.1
+
+  # Pointing to your working Pipa OrangeFox Device Tree
+  DEVICE_TREE_URL: https://github.com/PipaDB/OFRP-device_xiaomi_pipa.git
+  DEVICE_TREE_BRANCH: fox_12.1-a16
+  DEVICE_PATH: device/xiaomi/pipa
+
+  DEVICE_NAME: pipa
+  MAKEFILE_NAME: twrp_pipa
+
+jobs:
+  build:
+    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout Repo (Contains Scripts & Binaries)
+      uses: actions/checkout@v4
+
+    - name: Clean Workspace
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Install Dependencies
+      run: |
+        sudo apt update && sudo apt upgrade -y
+        DEBIAN_FRONTEND=noninteractive sudo apt install -y \
+          gperf gcc-multilib g++-multilib gcc-10-multilib g++-10-multilib \
+          libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
+          xsltproc bc ccache liblz4-tool libncurses-dev libsdl1.2-dev \
+          build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
+          imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar neofetch
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '11'
+
+    - name: Install repo tool
+      run: |
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        sudo ln -sf ~/bin/repo /usr/bin/repo
+
+    - name: Init and Sync TWRP Repo
+      run: |
+        mkdir arkt && cd arkt
+        git config --global user.name "${GITHUB_ACTOR}"
+        git config --global user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+        repo init --depth=1 -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH"
+        repo sync -j$(nproc --all) --force-sync
+
+    - name: Clone Pipa Device Tree
+      run: |
+        git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "$DEVICE_PATH"
+      working-directory: arkt
+
+    - name: Convert OrangeFox Tree to TWRP
+      run: |
+        echo "Dynamically converting OrangeFox configuration to standard TWRP..."
+        cd arkt/${DEVICE_PATH}
+        
+        # Rename makefiles if they exist
+        [ -f fox_pipa.mk ] && mv fox_pipa.mk twrp_pipa.mk
+        [ -f omni_pipa.mk ] && mv omni_pipa.mk twrp_pipa.mk
+        
+        # Update AndroidProducts.mk references
+        sed -i 's/fox_pipa/twrp_pipa/g' AndroidProducts.mk 2>/dev/null || true
+        sed -i 's/omni_pipa/twrp_pipa/g' AndroidProducts.mk 2>/dev/null || true
+        
+        # Update inherited configurations inside twrp_pipa.mk
+        if [ -f twrp_pipa.mk ]; then
+          sed -i 's/fox_pipa/twrp_pipa/g' twrp_pipa.mk
+          sed -i 's/omni_pipa/twrp_pipa/g' twrp_pipa.mk
+          sed -i 's/vendor\/omni\/config/vendor\/twrp\/config/g' twrp_pipa.mk
+          sed -i 's/vendor\/fox\/config/vendor\/twrp\/config/g' twrp_pipa.mk
+        fi
+
+    - name: Fetch and Adapt ArKT V4 Mod Patches
+      run: |
+        echo "Cloning ArKT's Nabu tree to extract GUI patches..."
+        git clone https://github.com/ArKT-7/twrp_device_xiaomi_nabu.git -b mod-windows /tmp/nabu_tree
+        
+        echo "Moving patches into the TWRP build root..."
+        cp -r /tmp/nabu_tree/.arkt-changes arkt/
+        
+        echo "Rewriting hardcoded nabu paths to pipa paths in the patch scripts..."
+        sed -i 's/xiaomi\/nabu/xiaomi\/pipa/g' arkt/.arkt-changes/deleted_files.sh
+        sed -i 's/twrp_nabu/twrp_pipa/g' arkt/.arkt-changes/deleted_files.sh 2>/dev/null || true
+        sed -i 's/xiaomi\/nabu/xiaomi\/pipa/g' arkt/.arkt-changes/bootable-recovery.patch 2>/dev/null || true
+
+    - name: Inject WOA Scripts and Binaries
+      run: |
+        echo "Creating bin directory in the recovery ramdisk..."
+        TARGET_BIN="arkt/${DEVICE_PATH}/recovery/root/system/bin"
+        mkdir -p "$TARGET_BIN"
+        
+        echo "Copying scripts and stripping .txt extension..."
+        for file in *.txt; do
+          if [ -f "$file" ]; then
+            cp "$file" "$TARGET_BIN/${file%.txt}"
+          fi
+        done
+        
+        echo "Copying GPT backups and static binaries..."
+        cp gpt* msc parted mkfs.fat mkfs.ntfs ntfs-3g sgdisk "$TARGET_BIN/" 2>/dev/null || true
+        
+        echo "Setting executable permissions..."
+        chmod +x "$TARGET_BIN"/*
+
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 12
+
+    - name: Build V4 Modded TWRP Recovery
+      run: |
+        neofetch
+        
+        echo "Injecting ArKT source modifications..."
+        patch -p1 < ".arkt-changes/bootable-recovery.patch"
+        patch -p1 < ".arkt-changes/build-make.patch"
+        bash .arkt-changes/deleted_files.sh  
+        
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        lunch "${MAKEFILE_NAME}-eng"
+        make clean
+        make bootimage -j$(nproc --all)
+      working-directory: arkt
+
+    - name: Prepare Upload
+      run: |
+        OUT=arkt/out/target/product/${DEVICE_NAME}
+        IMG=V4-MODDED-TWRP-WINDOWS-PIPA-$(date +'%d-%m').img
+        TEST_IMG=TEST_$IMG
+        ARTIFACT_NAME=UNZIP_IT-${IMG%.img}
+        mv "$OUT/boot.img" "$OUT/$IMG"
+        cp "$OUT/$IMG" "$OUT/$TEST_IMG"
+        echo "artifact_name=$ARTIFACT_NAME" >> $GITHUB_ENV
+        echo "img_name=$IMG" >> $GITHUB_ENV
+        echo "test_img_name=$TEST_IMG" >> $GITHUB_ENV
+
+    - name: Upload V4 TWRP to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: mod-win
+        files: arkt/out/target/product/${{ env.DEVICE_NAME }}/${{ env.test_img_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload V4 TWRP Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.artifact_name }}
+        path: arkt/out/target/product/${{ env.DEVICE_NAME }}/${{ env.img_name }}
+        
