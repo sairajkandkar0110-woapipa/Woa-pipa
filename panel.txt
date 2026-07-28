@@ -1,0 +1,15 @@
+#!/sbin/bash
+# Dynamically extract panel ID for Pipa
+PANEL=$(cat /proc/cmdline | grep -o 'dsi_[^ ]*' | head -n 1)
+
+if [ -n "$PANEL" ]; then
+    if echo "$PANEL" | grep -q "tianma"; then
+        echo Tianma
+    elif echo "$PANEL" | grep -q "csot\|huaxing"; then
+        echo Huaxing
+    else
+        echo "$PANEL"
+    fi
+else
+    echo unknown
+fi
