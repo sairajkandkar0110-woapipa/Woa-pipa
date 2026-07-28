@@ -66,7 +66,7 @@ jobs:
         git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "$DEVICE_PATH"
       working-directory: arkt
 
-    - name: Convert OrangeFox Tree to TWRP
+    - name: Convert OrangeFox Tree & Fix ADB
       run: |
         echo "Dynamically converting OrangeFox configuration to standard TWRP..."
         cd arkt/${DEVICE_PATH}
@@ -85,7 +85,20 @@ jobs:
           sed -i 's/omni_pipa/twrp_pipa/g' twrp_pipa.mk
           sed -i 's/vendor\/omni\/config/vendor\/twrp\/config/g' twrp_pipa.mk
           sed -i 's/vendor\/fox\/config/vendor\/twrp\/config/g' twrp_pipa.mk
+          
+          # --- ADB STABILITY FIX ---
+          echo "Injecting ADB stability properties..."
+          echo "" >> twrp_pipa.mk
+          echo "# Force stable ADB connections" >> twrp_pipa.mk
+          echo "PRODUCT_PROPERTY_OVERRIDES += \\" >> twrp_pipa.mk
+          echo "    ro.adb.secure=0 \\" >> twrp_pipa.mk
+          echo "    ro.debuggable=1 \\" >> twrp_pipa.mk
+          echo "    sys.usb.configfs=1 \\" >> twrp_pipa.mk
+          echo "    sys.usb.config=mtp,adb" >> twrp_pipa.mk
         fi
+        
+        # Remove conflicting OrangeFox USB init scripts if they exist
+        rm -f recovery/root/init.recovery.usb.rc 2>/dev/null || true
 
     - name: Fetch and Adapt ArKT V4 Mod Patches
       run: |
