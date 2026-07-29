@@ -66,7 +66,7 @@ jobs:
         git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "$DEVICE_PATH"
       working-directory: arkt
 
-    - name: Convert OrangeFox Tree & Fix ADB
+    - name: Convert OrangeFox Tree & Fix ADB & GUI
       run: |
         echo "Dynamically converting OrangeFox configuration to standard TWRP..."
         cd arkt/${DEVICE_PATH}
@@ -97,6 +97,13 @@ jobs:
           echo "    sys.usb.config=mtp,adb" >> twrp_pipa.mk
         fi
         
+        # --- ARKT GUI ACTIVATION ---
+        echo "Injecting ArKT Custom Theme paths into BoardConfig.mk..."
+        echo "" >> BoardConfig.mk
+        echo "# ArKT Modded Theme Configuration" >> BoardConfig.mk
+        echo "TW_THEME := portrait_hdpi" >> BoardConfig.mk
+        echo "TW_CUSTOM_THEME := device/xiaomi/pipa/recovery/root/twres" >> BoardConfig.mk
+        
         # Remove conflicting OrangeFox USB init scripts if they exist
         rm -f recovery/root/init.recovery.usb.rc 2>/dev/null || true
 
@@ -107,6 +114,12 @@ jobs:
         
         echo "Moving patches into the TWRP build root..."
         cp -r /tmp/nabu_tree/.arkt-changes arkt/
+        
+        echo "Copying ArKT's Custom GUI and Theme to Pipa..."
+        mkdir -p arkt/${DEVICE_PATH}/recovery/root/twres
+        mkdir -p arkt/${DEVICE_PATH}/recovery/root/system/bin
+        cp -rf /tmp/nabu_tree/recovery/root/twres/* arkt/${DEVICE_PATH}/recovery/root/twres/ 2>/dev/null || true
+        cp -rf /tmp/nabu_tree/recovery/root/system/bin/* arkt/${DEVICE_PATH}/recovery/root/system/bin/ 2>/dev/null || true
         
         echo "Rewriting hardcoded nabu paths to pipa paths in the patch scripts..."
         sed -i 's/xiaomi\/nabu/xiaomi\/pipa/g' arkt/.arkt-changes/deleted_files.sh
